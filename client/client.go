@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jxsl13/tw-protocol/net6"
-	"github.com/jxsl13/tw-protocol/net7"
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/net6"
+	"github.com/jxsl13/twclient/net7"
+	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twmap"
 )
 

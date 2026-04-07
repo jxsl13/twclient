@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/jxsl13/tw-protocol/packer"
+	"github.com/jxsl13/twclient/packer"
 )
 
 // CountVitalChunks scans chunk headers and counts vital chunks to update the ack counter.

@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/jxsl13/tw-protocol/packer"
+	"github.com/jxsl13/twclient/packer"
 )
 
 // PlayerInput represents the client input sent to the server (CNetObj_PlayerInput).

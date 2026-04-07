@@ -1,4 +1,4 @@
-module github.com/jxsl13/tw-protocol
+module github.com/jxsl13/twclient
 
 go 1.26.1
 

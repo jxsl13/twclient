@@ -1,8 +1,8 @@
 package net7
 
 import (
-	"github.com/jxsl13/tw-protocol/packer"
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/packer"
+	"github.com/jxsl13/twclient/packet"
 )
 
 // --- Control message builders ---

@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jxsl13/tw-protocol/packer"
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/packer"
+	"github.com/jxsl13/twclient/packet"
 )
 
 // emptyInput is a pre-built zero-input payload (10 fields × varint 0)

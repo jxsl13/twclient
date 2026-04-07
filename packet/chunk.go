@@ -3,7 +3,7 @@ package packet
 import (
 	"fmt"
 
-	"github.com/jxsl13/tw-protocol/packer"
+	"github.com/jxsl13/twclient/packer"
 )
 
 const (

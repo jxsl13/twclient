@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jxsl13/tw-protocol/network"
-	"github.com/jxsl13/tw-protocol/packer"
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/network"
+	"github.com/jxsl13/twclient/packer"
+	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twmap"
 	"github.com/teeworlds-go/huffman/v2"
 )

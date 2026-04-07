@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/packet"
 )
 
 // defaultReadTimeout returns the read timeout from TW_TIMEOUT env or 5s.

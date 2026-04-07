@@ -3,8 +3,8 @@ package client
 import (
 	"time"
 
-	"github.com/jxsl13/tw-protocol/net6"
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/net6"
+	"github.com/jxsl13/twclient/packet"
 )
 
 // GameStateFlags from obj_game_info.

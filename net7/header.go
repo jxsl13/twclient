@@ -3,7 +3,7 @@ package net7
 import (
 	"fmt"
 
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/packet"
 )
 
 // Header represents the 0.7 packet header (always 7 bytes).

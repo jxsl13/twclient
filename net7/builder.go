@@ -1,6 +1,6 @@
 package net7
 
-import "github.com/jxsl13/tw-protocol/packet"
+import "github.com/jxsl13/twclient/packet"
 
 // BuildCtrlPacket builds a complete 0.7 control packet.
 func BuildCtrlPacket(token packet.Token, ack int, payload []byte) []byte {

@@ -1,7 +1,7 @@
 package client
 
 import (
-	"github.com/jxsl13/tw-protocol/packet"
+	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twmap"
 )
 
