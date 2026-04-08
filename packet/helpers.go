@@ -30,6 +30,18 @@ func VarintDecompress(src, dst []byte) int {
 	return dstPos
 }
 
+// VarintCompress compresses an array of little-endian int32 values into
+// a stream of teeworlds CVariableInt-encoded values.
+// This is the inverse of VarintDecompress.
+func VarintCompress(src []byte) []byte {
+	var out []byte
+	for i := 0; i+4 <= len(src); i += 4 {
+		v := int(int32(binary.LittleEndian.Uint32(src[i : i+4])))
+		out = varint.AppendVarint(out, v)
+	}
+	return out
+}
+
 // ReadInt32LE reads a little-endian int32 from a 4-byte slice.
 func ReadInt32LE(b []byte) int {
 	return int(int32(binary.LittleEndian.Uint32(b)))
