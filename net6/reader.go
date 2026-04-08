@@ -10,18 +10,6 @@ import (
 	"github.com/jxsl13/twclient/packet"
 )
 
-// emptyInput is a pre-built zero-input payload (10 fields × varint 0)
-// used for immediate snap acks from the reader goroutine.
-var emptyInput = func() []byte {
-	p := make([]byte, 10)
-	for i := range p {
-		p[i] = 0 // varint(0) = single byte 0x00
-	}
-	return p
-}()
-
-const emptyInputSize = 10 * 4 // 10 fields × 4 bytes (server's CNetObj_PlayerInput)
-
 // readerTimeout is the short read timeout used by the background reader
 // so it can periodically check the stop signal.
 const readerTimeout = 50 * time.Millisecond
@@ -347,7 +335,7 @@ func (s *Session) forceAckSnap(tick int) {
 }
 
 func (s *Session) sendAckPacket(tick int) {
-	inputMsg := SysInput(tick, tick+1, emptyInputSize, emptyInput)
+	inputMsg := SysInput(tick, tick+1, packet.EmptyInputSize, packet.EmptyInput)
 	chunkData := WrapChunk(inputMsg)
 	s.mu.Lock()
 	hdr := Header{

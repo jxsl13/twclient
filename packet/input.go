@@ -149,25 +149,40 @@ func (p *PlayerInput) SetTarget(x, y int) {
 type Emoticon int
 
 const (
-	EmoticonOop       Emoticon = 0  // "oop" / surprise
-	EmoticonExclaim   Emoticon = 1  // exclamation / alert
-	EmoticonHearts    Emoticon = 2  // hearts
-	EmoticonDrop      Emoticon = 3  // tear drop
-	EmoticonDotdot    Emoticon = 4  // "..." / ellipsis
-	EmoticonMusic     Emoticon = 5  // music note
-	EmoticonSorry     Emoticon = 6  // sorry
-	EmoticonGhost     Emoticon = 7  // ghost
-	EmoticonSushi     Emoticon = 8  // sushi / annoyed
-	EmoticonSplattee  Emoticon = 9  // splattee / angry
-	EmoticonDeviltee  Emoticon = 10 // deviltee
-	EmoticonZomg      Emoticon = 11 // zomg / swearing
-	EmoticonZzz       Emoticon = 12 // zzZ / sleeping
-	EmoticonWtf       Emoticon = 13 // WTF
-	EmoticonEyes      Emoticon = 14 // eyes / happy
-	EmoticonQuestion  Emoticon = 15 // "??" / question
+	EmoticonOop      Emoticon = 0  // "oop" / surprise
+	EmoticonExclaim  Emoticon = 1  // exclamation / alert
+	EmoticonHearts   Emoticon = 2  // hearts
+	EmoticonDrop     Emoticon = 3  // tear drop
+	EmoticonDotdot   Emoticon = 4  // "..." / ellipsis
+	EmoticonMusic    Emoticon = 5  // music note
+	EmoticonSorry    Emoticon = 6  // sorry
+	EmoticonGhost    Emoticon = 7  // ghost
+	EmoticonSushi    Emoticon = 8  // sushi / annoyed
+	EmoticonSplattee Emoticon = 9  // splattee / angry
+	EmoticonDeviltee Emoticon = 10 // deviltee
+	EmoticonZomg     Emoticon = 11 // zomg / swearing
+	EmoticonZzz      Emoticon = 12 // zzZ / sleeping
+	EmoticonWtf      Emoticon = 13 // WTF
+	EmoticonEyes     Emoticon = 14 // eyes / happy
+	EmoticonQuestion Emoticon = 15 // "??" / question
 
 	NumEmoticons = 16
 )
+
+// InputFields is the number of int32 fields in CNetObj_PlayerInput.
+const InputFields = 10
+
+// EmptyInputSize is the byte size of a zero-valued CNetObj_PlayerInput
+// as stored on the server (InputFields × 4 bytes).
+const EmptyInputSize = InputFields * 4
+
+// EmptyInput is a pre-built zero-input payload (10 fields encoded as
+// varint 0). Used for snap acks when no real input is available.
+var EmptyInput = func() []byte {
+	// 0-initialized
+	p := make([]byte, InputFields)
+	return p
+}()
 
 // PlayerInput represents the client input sent to the server (CNetObj_PlayerInput).
 // All fields use typed values — use the Set* methods to assign from raw integers

@@ -16,14 +16,4 @@ func packInput(p *packet.PlayerInput) []byte {
 }
 
 // inputSize is the input size in the format expected by SysInput (10 fields × 4 bytes).
-const inputSize = 10 * 4
-
-// Weapon IDs (re-exported from packet for backward compatibility).
-const (
-	WeaponHammer  = packet.WeaponHammer
-	WeaponGun     = packet.WeaponGun
-	WeaponShotgun = packet.WeaponShotgun
-	WeaponGrenade = packet.WeaponGrenade
-	WeaponLaser   = packet.WeaponLaser
-	WeaponNinja   = packet.WeaponNinja
-)
+const inputSize = packet.InputFields * 4
