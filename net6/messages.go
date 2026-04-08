@@ -181,10 +181,10 @@ func GameClKill() []byte {
 }
 
 // GameClEmoticon builds a CL_EMOTICON game message chunk payload.
-func GameClEmoticon(emoticon int) []byte {
+func GameClEmoticon(emoticon packet.Emoticon) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgGameClEmoticon, false)...)
-	data = append(data, packer.PackInt(emoticon)...)
+	data = append(data, packer.PackInt(int(emoticon))...)
 	return data
 }
 

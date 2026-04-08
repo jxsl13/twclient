@@ -1,12 +1,49 @@
 package packet
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 
 	"github.com/jxsl13/twclient/packer"
+	"github.com/teeworlds-go/varint"
 )
+
+// VarintDecompress decompresses a stream of teeworlds CVariableInt-encoded
+// values into an array of little-endian int32 values. Returns the number
+// of bytes written to dst, or -1 on error.
+func VarintDecompress(src, dst []byte) int {
+	srcPos := 0
+	dstPos := 0
+
+	for srcPos < len(src) && dstPos+4 <= len(dst) {
+		val, n := varint.Varint(src[srcPos:])
+		if n <= 0 {
+			return -1
+		}
+		srcPos += n
+		binary.LittleEndian.PutUint32(dst[dstPos:dstPos+4], uint32(int32(val)))
+		dstPos += 4
+	}
+
+	return dstPos
+}
+
+// ReadInt32LE reads a little-endian int32 from a 4-byte slice.
+func ReadInt32LE(b []byte) int {
+	return int(int32(binary.LittleEndian.Uint32(b)))
+}
+
+// CString extracts a null-terminated C string from a byte slice.
+func CString(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
+}
 
 // CountVitalChunks scans chunk headers and updates the ack counter
 // based on vital chunk sequence numbers. Resent chunks (with sequence

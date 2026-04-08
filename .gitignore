@@ -1,2 +1,5 @@
 *.ckpt
-/racebot
+/bin
+/cmd/
+go.sum
+*.log

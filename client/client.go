@@ -263,6 +263,18 @@ func (c *Client) LastSnapTime() time.Time {
 	return c.snap.lastSnapTime
 }
 
+// PredTick returns the current predicted tick from the prediction time tracker.
+// Returns 0 if no snapshot has been received yet.
+func (c *Client) PredTick() int {
+	return c.predTime.PredTick()
+}
+
+// AckTick returns the latest acknowledged snapshot tick.
+// Returns 0 if no snapshot has been received yet.
+func (c *Client) AckTick() int {
+	return c.predTime.AckTick()
+}
+
 // ResetRace clears the race time state (e.g. between episodes).
 func (c *Client) ResetRace() {
 	c.mu.Lock()
@@ -276,7 +288,7 @@ func (c *Client) ResetRace() {
 // PredictedTime tracker to determine the current prediction tick, sending
 // input when a new predicted tick boundary is crossed (~50 times/sec).
 // Between tick boundaries, inputs are throttled to inputMinInterval.
-func (c *Client) SendInput(input PlayerInput) error {
+func (c *Client) SendInput(input packet.PlayerInput) error {
 	if c.sess == nil {
 		return ErrNotConnected
 	}
@@ -298,8 +310,8 @@ func (c *Client) SendInput(input PlayerInput) error {
 	c.lastInputTime = time.Now()
 	c.inputMu.Unlock()
 
-	data := input.pack()
-	return c.sess.SendInput(ackTick, predTick, input.inputSize(), data)
+	data := packInput(&input)
+	return c.sess.SendInput(ackTick, predTick, inputSize, data)
 }
 
 // SendChat sends a chat message.
