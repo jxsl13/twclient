@@ -64,6 +64,9 @@ func Dial(address string, opts ...DialOption) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial: dial %q: %w", address, err)
 	}
+	// Increase receive buffer to 2MB to absorb burst snapshot delivery.
+	// Default (786KB) can overflow when many bots share scheduling time.
+	_ = udp.SetReadBuffer(2 * 1024 * 1024)
 	rt := defaultReadTimeout()
 	c := &Conn{
 		conn:         udp,

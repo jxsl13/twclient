@@ -8,7 +8,9 @@ import (
 	"github.com/jxsl13/twclient/packer"
 )
 
-// CountVitalChunks scans chunk headers and counts vital chunks to update the ack counter.
+// CountVitalChunks scans chunk headers and updates the ack counter
+// based on vital chunk sequence numbers. Resent chunks (with sequence
+// numbers we've already seen) are not counted.
 // The split parameter controls chunk header format (4 for 0.6, 6 for 0.7).
 func CountVitalChunks(payload []byte, numChunks int, currentAck int, split int) int {
 	sizeLowMask := (1 << split) - 1
@@ -24,7 +26,15 @@ func CountVitalChunks(payload []byte, numChunks int, currentAck int, split int) 
 		hdrSize := 2
 		if vital {
 			hdrSize = 3
-			ack++
+			if offset+3 <= len(payload) {
+				// Extract the sequence number from the chunk header
+				seq := (int(payload[offset+1]) & ^sizeLowMask & 0xFF) << 2
+				seq |= int(payload[offset+2])
+				// Only advance ack if this is the next expected sequence
+				if seq == (ack+1)%MaxSequence {
+					ack = seq
+				}
+			}
 		}
 		offset += hdrSize + size
 	}

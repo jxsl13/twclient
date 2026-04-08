@@ -12,6 +12,7 @@ import (
 	"github.com/jxsl13/twclient/network"
 	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twmap"
+	"github.com/teeworlds-go/huffman/v2"
 )
 
 // Option configures a Session at construction time.
@@ -160,7 +161,8 @@ func (s *Session) Handshake() error {
 	return nil
 }
 
-// Login performs the full connection sequence: handshake → info → ready → startinfo → entergame.
+// Login performs the full connection sequence:
+// handshake → info → (recv map_change) → ready → (recv con_ready) → startinfo + entergame
 func (s *Session) Login(name, clan, skin string, country int) error {
 	if err := s.Handshake(); err != nil {
 		return err
@@ -174,24 +176,24 @@ func (s *Session) Login(name, clan, skin string, country int) error {
 		return fmt.Errorf("session07: send info: %w", err)
 	}
 
-	// Receive and count acks until we get CON_READY
-	if err := s.recvUntilConReady(); err != nil {
+	// Receive until MAP_CHANGE (server sends capabilities + map info after INFO)
+	if err := s.recvUntilMapChange(); err != nil {
 		return err
 	}
-	s.log.Debug("received CON_READY", "ack", s.ack)
+	s.log.Debug("received MAP_CHANGE", "ack", s.ack)
 
-	// Send ready
+	// Send ready (signals we have the map / don't need download)
 	s.log.Debug("sending READY")
 	readyChunk := WrapVitalChunk(SysReady(), s.NextSeq())
 	if err := s.SendChunks(1, readyChunk); err != nil {
 		return fmt.Errorf("session07: send ready: %w", err)
 	}
 
-	// Receive until we get SV_READYTOENTER
-	if err := s.recvUntilReadyToEnter(); err != nil {
+	// Receive until CON_READY
+	if err := s.recvUntilConReady(); err != nil {
 		return err
 	}
-	s.log.Debug("received SV_READYTOENTER", "ack", s.ack)
+	s.log.Debug("received CON_READY", "ack", s.ack)
 
 	// Send startinfo
 	s.log.Debug("sending STARTINFO", "name", name, "clan", clan)
@@ -375,7 +377,38 @@ func (s *Session) parsePayload(resp []byte) (Header, []byte, error) {
 	}
 
 	payload := resp[HeaderSize:]
+	if hdr.Flags.Compression {
+		d, err := huffman.Decompress(payload)
+		if err == nil {
+			payload = d
+		}
+		// on error, fall back to raw payload
+	}
 	return hdr, payload, nil
+}
+
+func (s *Session) recvUntilMapChange() error {
+	for range 20 {
+		hdr, payload, err := s.recvAndParsePayload()
+		if err != nil {
+			return fmt.Errorf("session07: recv waiting for map_change: %w", err)
+		}
+		if payload == nil {
+			continue
+		}
+		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
+		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
+			if info, err := packet.ParseMapChangePayload(data); err == nil {
+				s.mapMu.Lock()
+				s.mapInfo = info
+				s.parsed = nil
+				s.mapMu.Unlock()
+				s.log.Debug("parsed MAP_CHANGE", "map", info.Name, "crc", info.CRC, "size", info.Size, "sha256", hex.EncodeToString(info.Sha256[:]))
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("session07: did not receive MAP_CHANGE")
 }
 
 func (s *Session) recvUntilConReady() error {
@@ -391,7 +424,7 @@ func (s *Session) recvUntilConReady() error {
 		if hdr.Flags.Control {
 			continue
 		}
-		// Parse MAP_CHANGE if present (server sends it before CON_READY)
+		// Parse MAP_CHANGE if present (server may sends it here on map reload)
 		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
 			if info, err := packet.ParseMapChangePayload(data); err == nil {
 				s.mapMu.Lock()

@@ -92,7 +92,9 @@ func (s *Session) readLoop() {
 	defer close(s.reader.eventCh)
 
 	const keepaliveInterval = 2 * time.Second
+	const reackInterval = 500 * time.Millisecond
 	lastSend := time.Now()
+	lastReack := time.Now()
 
 	for {
 		select {
@@ -105,6 +107,16 @@ func (s *Session) readLoop() {
 		if time.Since(lastSend) > keepaliveInterval {
 			_ = s.SendKeepAlive()
 			lastSend = time.Now()
+		}
+
+		// Periodic re-ack: resend ack for the latest snapshot tick.
+		// Protects against a single lost ack causing server to degrade
+		// to SNAPRATE_RECOVER.
+		if time.Since(lastReack) > reackInterval {
+			if tick := int(s.lastAckedSnap.Load()); tick > 0 {
+				s.forceAckSnap(tick)
+			}
+			lastReack = time.Now()
 		}
 
 		hdr, payload, err := s.recvAndAckTimeout(readerTimeout)
@@ -321,6 +333,16 @@ func (s *Session) ackSnap(tick int) {
 			break
 		}
 	}
+	s.sendAckPacket(tick)
+}
+
+// forceAckSnap re-sends an ack for the given tick unconditionally.
+// Used for periodic re-acks to recover from lost UDP ack packets.
+func (s *Session) forceAckSnap(tick int) {
+	s.sendAckPacket(tick)
+}
+
+func (s *Session) sendAckPacket(tick int) {
 	inputMsg := SysInput(tick, tick+1, emptyInputSize, emptyInput)
 	chunkData := WrapChunk(inputMsg)
 	s.mu.Lock()
