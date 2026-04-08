@@ -2,6 +2,7 @@ package net7
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -102,7 +103,7 @@ func (s *Session) NextSeq() int {
 
 // Handshake performs the full 0.7 token exchange + connect handshake.
 // Returns nil on success, allowing the caller to then send arbitrary packets.
-func (s *Session) Handshake() error {
+func (s *Session) Handshake(ctx context.Context) error {
 	// Step 1: Send token request
 	tokenReq := BuildTokenRequest(s.clientToken)
 	s.log.Debug("sending TOKEN request",
@@ -113,7 +114,7 @@ func (s *Session) Handshake() error {
 	}
 
 	// Step 2: Receive token response
-	resp, err := s.conn.Recv()
+	resp, err := s.conn.RecvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("session07: recv token response: %w", err)
 	}
@@ -141,7 +142,7 @@ func (s *Session) Handshake() error {
 	}
 
 	// Step 4: Receive accept
-	resp, err = s.conn.Recv()
+	resp, err = s.conn.RecvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("session07: recv accept: %w", err)
 	}
@@ -163,8 +164,8 @@ func (s *Session) Handshake() error {
 
 // Login performs the full connection sequence:
 // handshake → info → (recv map_change) → ready → (recv con_ready) → startinfo + entergame
-func (s *Session) Login(name, clan, skin string, country int) error {
-	if err := s.Handshake(); err != nil {
+func (s *Session) Login(ctx context.Context, name, clan, skin string, country int) error {
+	if err := s.Handshake(ctx); err != nil {
 		return err
 	}
 
@@ -177,7 +178,7 @@ func (s *Session) Login(name, clan, skin string, country int) error {
 	}
 
 	// Receive until MAP_CHANGE (server sends capabilities + map info after INFO)
-	if err := s.recvUntilMapChange(); err != nil {
+	if err := s.recvUntilMapChange(ctx); err != nil {
 		return err
 	}
 	s.log.Debug("received MAP_CHANGE", "ack", s.ack)
@@ -190,7 +191,7 @@ func (s *Session) Login(name, clan, skin string, country int) error {
 	}
 
 	// Receive until CON_READY
-	if err := s.recvUntilConReady(); err != nil {
+	if err := s.recvUntilConReady(ctx); err != nil {
 		return err
 	}
 	s.log.Debug("received CON_READY", "ack", s.ack)
@@ -293,8 +294,8 @@ func (s *Session) SendKill() error {
 
 // RecvAndAck receives one packet, tracks the ack counter, and returns the
 // parsed header and the payload.
-func (s *Session) RecvAndAck() (Header, []byte, error) {
-	hdr, payload, err := s.recvAndParsePayload()
+func (s *Session) RecvAndAck(ctx context.Context) (Header, []byte, error) {
+	hdr, payload, err := s.recvAndParsePayload(ctx)
 	if err != nil {
 		return hdr, nil, err
 	}
@@ -317,8 +318,8 @@ func (s *Session) RecvAndAck() (Header, []byte, error) {
 }
 
 // recvAndAckTimeout is like RecvAndAck but uses the given read timeout.
-func (s *Session) recvAndAckTimeout(timeout time.Duration) (Header, []byte, error) {
-	hdr, payload, err := s.recvAndParsePayloadTimeout(timeout)
+func (s *Session) recvAndAckTimeout(ctx context.Context, timeout time.Duration) (Header, []byte, error) {
+	hdr, payload, err := s.recvAndParsePayloadTimeout(ctx, timeout)
 	if err != nil {
 		return hdr, nil, err
 	}
@@ -334,10 +335,11 @@ func (s *Session) recvAndAckTimeout(timeout time.Duration) (Header, []byte, erro
 // and returns all payloads collected.
 func (s *Session) DrainResponses(n int) [][]byte {
 	drainTimeout := max(s.conn.ReadTimeout()/10, 5*time.Millisecond)
+	ctx := context.Background()
 
 	var payloads [][]byte
 	for range n {
-		_, payload, err := s.recvAndAckTimeout(drainTimeout)
+		_, payload, err := s.recvAndAckTimeout(ctx, drainTimeout)
 		if err != nil {
 			break
 		}
@@ -350,16 +352,18 @@ func (s *Session) DrainResponses(n int) [][]byte {
 
 // recvAndParsePayload receives a packet, parses the 0.7 header,
 // and returns the header and clean payload.
-func (s *Session) recvAndParsePayload() (Header, []byte, error) {
-	resp, err := s.conn.Recv()
+func (s *Session) recvAndParsePayload(ctx context.Context) (Header, []byte, error) {
+	resp, err := s.conn.RecvContext(ctx)
 	if err != nil {
 		return Header{}, nil, err
 	}
 	return s.parsePayload(resp)
 }
 
-func (s *Session) recvAndParsePayloadTimeout(timeout time.Duration) (Header, []byte, error) {
-	resp, err := s.conn.RecvWithTimeout(timeout)
+func (s *Session) recvAndParsePayloadTimeout(ctx context.Context, timeout time.Duration) (Header, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	resp, err := s.conn.RecvContext(ctx)
 	if err != nil {
 		return Header{}, nil, err
 	}
@@ -387,9 +391,9 @@ func (s *Session) parsePayload(resp []byte) (Header, []byte, error) {
 	return hdr, payload, nil
 }
 
-func (s *Session) recvUntilMapChange() error {
+func (s *Session) recvUntilMapChange(ctx context.Context) error {
 	for range 20 {
-		hdr, payload, err := s.recvAndParsePayload()
+		hdr, payload, err := s.recvAndParsePayload(ctx)
 		if err != nil {
 			return fmt.Errorf("session07: recv waiting for map_change: %w", err)
 		}
@@ -411,9 +415,9 @@ func (s *Session) recvUntilMapChange() error {
 	return fmt.Errorf("session07: did not receive MAP_CHANGE")
 }
 
-func (s *Session) recvUntilConReady() error {
+func (s *Session) recvUntilConReady(ctx context.Context) error {
 	for range 20 {
-		hdr, payload, err := s.recvAndParsePayload()
+		hdr, payload, err := s.recvAndParsePayload(ctx)
 		if err != nil {
 			return fmt.Errorf("session07: recv waiting for con_ready: %w", err)
 		}
@@ -441,9 +445,9 @@ func (s *Session) recvUntilConReady() error {
 	return fmt.Errorf("session07: did not receive CON_READY")
 }
 
-func (s *Session) recvUntilReadyToEnter() error {
+func (s *Session) recvUntilReadyToEnter(ctx context.Context) error {
 	for range 30 {
-		hdr, payload, err := s.recvAndParsePayload()
+		hdr, payload, err := s.recvAndParsePayload(ctx)
 		if err != nil {
 			return fmt.Errorf("session07: recv waiting for ready_to_enter: %w", err)
 		}
@@ -465,7 +469,7 @@ func (s *Session) recvUntilReadyToEnter() error {
 // 0.7 map download is server-push: the client sends REQUEST_MAP_DATA
 // and the server pushes sv_map_window chunks at a time. MAP_DATA messages
 // contain only raw bytes (no header fields like 0.6).
-func (s *Session) DownloadMap() (*twmap.Map, error) {
+func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 	info := s.GetMapInfo()
 	if info.Name == "" {
 		return nil, fmt.Errorf("session07: no map info (call Login first)")
@@ -500,7 +504,7 @@ func (s *Session) DownloadMap() (*twmap.Map, error) {
 		}
 
 		// Receive chunks pushed by the server for this window
-		chunkData, err := s.recvMapDataChunks()
+		chunkData, err := s.recvMapDataChunks(ctx)
 		if err != nil {
 			if s.mapCache != nil {
 				s.mapCache.PutFailed(info.Name, info.Sha256)
@@ -534,10 +538,10 @@ func (s *Session) DownloadMap() (*twmap.Map, error) {
 // recvMapDataChunks receives packets until at least one MAP_DATA is found
 // or a timeout occurs. Returns the concatenated raw map bytes.
 // In 0.7, MAP_DATA contains only raw bytes (no header fields).
-func (s *Session) recvMapDataChunks() ([]byte, error) {
+func (s *Session) recvMapDataChunks(ctx context.Context) ([]byte, error) {
 	var mapData []byte
 	for range 30 {
-		hdr, payload, err := s.recvAndParsePayload()
+		hdr, payload, err := s.recvAndParsePayload(ctx)
 		if err != nil {
 			if mapData != nil {
 				return mapData, nil // timeout after receiving some data is OK

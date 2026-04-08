@@ -9,6 +9,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -61,9 +62,9 @@ type Client struct {
 	mu   sync.RWMutex
 	snap SnapStorage
 
-	// event processing goroutine
-	stopCh chan struct{}
-	doneCh chan struct{}
+	// event processing goroutine — cancelled by Close or parent context
+	readerCancel context.CancelFunc
+	doneCh       chan struct{}
 
 	// disconnection error — set by event loop, read by Err()
 	errMu   sync.Mutex
@@ -136,9 +137,10 @@ func New(address string, opts ...Option) *Client {
 
 // Connect creates a new session, performs the protocol handshake, logs in,
 // downloads the map, starts the background event reader, and begins
-// automatic snap processing. After Connect returns, game state is
-// accessible via Character(), RaceTime(), etc.
-func (c *Client) Connect() (err error) {
+// automatic snap processing. The context governs the entire client lifetime:
+// cancelling it stops the background reader and unblocks all I/O.
+// After Connect returns, game state is accessible via Character(), RaceTime(), etc.
+func (c *Client) Connect(ctx context.Context) (err error) {
 	sess, err := c.newSession()
 	if err != nil {
 		return fmt.Errorf("client: dial %s: %w", c.address, err)
@@ -149,11 +151,11 @@ func (c *Client) Connect() (err error) {
 		}
 	}()
 
-	if err := sess.Login(c.name, c.clan, c.skin, c.country); err != nil {
+	if err := sess.Login(ctx, c.name, c.clan, c.skin, c.country); err != nil {
 		return fmt.Errorf("client: login: %w", err)
 	}
 
-	if _, err := sess.DownloadMap(); err != nil {
+	if _, err := sess.DownloadMap(ctx); err != nil {
 		c.log.Warn("map download failed, continuing without map", "error", err)
 	}
 
@@ -176,13 +178,15 @@ func (c *Client) Connect() (err error) {
 
 	c.predTime.Reset()
 
-	sess.StartReader()
+	// Create a child context for the reader — cancelled by Close or parent ctx.
+	readerCtx, readerCancel := context.WithCancel(ctx)
+	sess.StartReader(readerCtx)
 	c.sess = sess
 
 	// Start background event processing
-	c.stopCh = make(chan struct{})
+	c.readerCancel = readerCancel
 	c.doneCh = make(chan struct{})
-	go c.eventLoop()
+	go c.eventLoop(readerCtx)
 
 	return nil
 }
@@ -190,10 +194,10 @@ func (c *Client) Connect() (err error) {
 // Close stops the event processor, disconnects from the server, and
 // resets state. Safe to call multiple times.
 func (c *Client) Close() error {
-	if c.stopCh != nil {
-		close(c.stopCh)
+	if c.readerCancel != nil {
+		c.readerCancel()
 		<-c.doneCh // wait for event loop to finish
-		c.stopCh = nil
+		c.readerCancel = nil
 		c.doneCh = nil
 	}
 	if c.sess != nil {
@@ -205,9 +209,10 @@ func (c *Client) Close() error {
 }
 
 // Reconnect closes the current session (if any) and establishes a new one.
-func (c *Client) Reconnect() error {
+// The new context governs the new connection's lifetime.
+func (c *Client) Reconnect(ctx context.Context) error {
 	c.Close()
-	return c.Connect()
+	return c.Connect(ctx)
 }
 
 // IsConnected returns true if the client has an active session.
@@ -336,13 +341,13 @@ func (c *Client) MapName() string {
 // eventLoop runs in a goroutine and continuously drains events from the
 // session, updating snap state. It stops when stopCh is closed or the
 // session delivers a close event.
-func (c *Client) eventLoop() {
+func (c *Client) eventLoop(ctx context.Context) {
 	defer close(c.doneCh)
 
 	ch := c.sess.EventCh()
 	for {
 		select {
-		case <-c.stopCh:
+		case <-ctx.Done():
 			return
 		case ev, ok := <-ch:
 			if !ok {

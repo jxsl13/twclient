@@ -1,6 +1,7 @@
 package net6
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -29,7 +30,8 @@ const readerTimeout = 50 * time.Millisecond
 // It is embedded in Session and activated by StartReader().
 type reader struct {
 	eventCh      chan packet.Event
-	stopCh       chan struct{}
+	cancel       context.CancelFunc
+	ctx          context.Context
 	lastRecv     atomic.Int64
 	snaps        *packet.SnapStorage
 	snapAssembly *packet.SnapAssemblyState
@@ -39,10 +41,11 @@ type reader struct {
 // the server, processes chunks, delta-decompresses snapshots, and
 // delivers typed events on the Poll channel.
 //
-// Must be called after Login. Calling Close stops the reader.
-func (s *Session) StartReader() {
+// The context governs the reader's lifetime: cancelling it stops the
+// reader goroutine. Calling Close also stops the reader.
+func (s *Session) StartReader(ctx context.Context) {
+	s.reader.ctx, s.reader.cancel = context.WithCancel(ctx)
 	s.reader.eventCh = make(chan packet.Event, 128)
-	s.reader.stopCh = make(chan struct{})
 	s.reader.snaps = packet.NewSnapStorage(SnapItemSize)
 	s.reader.lastRecv.Store(time.Now().UnixNano())
 
@@ -67,11 +70,11 @@ func (s *Session) Poll() (packet.Event, error) {
 	return ev, nil
 }
 
-// StopReader signals the background reader to stop and drains the channel.
+// StopReader signals the background reader to stop.
 func (s *Session) StopReader() {
-	if s.reader.stopCh != nil {
-		close(s.reader.stopCh)
-		s.reader.stopCh = nil
+	if s.reader.cancel != nil {
+		s.reader.cancel()
+		s.reader.cancel = nil
 	}
 }
 
@@ -91,6 +94,7 @@ func (s *Session) LastSnapTick() int {
 func (s *Session) readLoop() {
 	defer close(s.reader.eventCh)
 
+	ctx := s.reader.ctx
 	const keepaliveInterval = 2 * time.Second
 	const reackInterval = 500 * time.Millisecond
 	lastSend := time.Now()
@@ -98,7 +102,7 @@ func (s *Session) readLoop() {
 
 	for {
 		select {
-		case <-s.reader.stopCh:
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -119,7 +123,7 @@ func (s *Session) readLoop() {
 			lastReack = time.Now()
 		}
 
-		hdr, payload, err := s.recvAndAckTimeout(readerTimeout)
+		hdr, payload, err := s.recvAndAckTimeout(ctx, readerTimeout)
 		if err != nil {
 			if packet.IsTimeout(err) {
 				continue

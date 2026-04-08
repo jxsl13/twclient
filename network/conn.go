@@ -2,6 +2,7 @@
 package network
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,7 +24,7 @@ func defaultReadTimeout() time.Duration {
 
 // Conn wraps a raw UDP connection for sending and receiving teeworlds packets.
 // Timeouts are set at construction time via DialOption and are immutable
-// afterwards. Use RecvWithTimeout for one-off deadline overrides.
+// afterwards. Use context.WithTimeout for one-off deadline overrides.
 type Conn struct {
 	conn         *net.UDPConn
 	addr         *net.UDPAddr
@@ -103,27 +104,32 @@ func (c *Conn) SendRaw(data []byte) error {
 	return err
 }
 
-// Recv receives a packet and returns the data slice.
-// It uses the connection's configured read timeout.
-func (c *Conn) Recv() ([]byte, error) {
-	return c.recvWith(c.readTimeout)
-}
+// RecvContext receives a packet, respecting the context's deadline.
+// If ctx carries no deadline, the connection's default read timeout is used.
+func (c *Conn) RecvContext(ctx context.Context) ([]byte, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 
-// RecvWithTimeout receives a packet using the given deadline override.
-// Pass 0 for no timeout.
-func (c *Conn) RecvWithTimeout(timeout time.Duration) ([]byte, error) {
-	return c.recvWith(timeout)
-}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(c.readTimeout)
+	}
 
-func (c *Conn) recvWith(timeout time.Duration) ([]byte, error) {
-	if timeout > 0 {
-		if err := c.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
-			return nil, err
-		}
+	if err := c.conn.SetReadDeadline(deadline); err != nil {
+		return nil, err
 	}
 	buf := make([]byte, packet.MaxPacketSize)
 	n, err := c.conn.Read(buf)
 	if err != nil {
+		// If context was cancelled while we were blocking, surface that.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		return nil, err
 	}
 	return buf[:n], nil

@@ -1,6 +1,8 @@
 package client
 
 import (
+	"context"
+
 	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twmap"
 )
@@ -13,14 +15,15 @@ import (
 // changes, disconnects) rather than raw packet bytes.
 type Session interface {
 	// Login connects, performs the handshake, and logs in.
-	Login(name, clan, skin string, country int) error
+	// The context controls the handshake and login timeout.
+	Login(ctx context.Context, name, clan, skin string, country int) error
 
 	// Close disconnects from the server.
 	Close() error
 
 	// StartReader launches the background packet reader.
-	// Must be called after Login.
-	StartReader()
+	// The context governs the reader's lifetime.
+	StartReader(ctx context.Context)
 
 	// EventCh returns the channel delivering parsed events
 	// (snapshots, map changes, disconnects, etc.).
@@ -28,7 +31,7 @@ type Session interface {
 
 	// DownloadMap downloads and parses the current map.
 	// Uses MapCache if configured.
-	DownloadMap() (*twmap.Map, error)
+	DownloadMap(ctx context.Context) (*twmap.Map, error)
 
 	// Map returns the parsed map or nil.
 	Map() *twmap.Map
