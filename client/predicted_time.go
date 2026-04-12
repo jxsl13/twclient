@@ -62,10 +62,7 @@ func (p *PredictedTime) PredTick() int {
 		return 0
 	}
 
-	elapsed := time.Since(p.baseTime) + p.adjustOffset
-	if elapsed < 0 {
-		elapsed = 0
-	}
+	elapsed := max(time.Since(p.baseTime)+p.adjustOffset, 0)
 	elapsedTicks := int(elapsed / tickDuration)
 
 	return p.baseTick + elapsedTicks + 1

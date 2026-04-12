@@ -1,4 +1,36 @@
+---
+doc_title: Teeworlds 0.6 and DDNet Protocol Definition
+summary: Canonical wire-level protocol reference for DDNet and Teeworlds 0.6 and 0.7 related details in this repository.
+canonical_for: packet formats, message layouts, flags, handshake rules, protocol corrections
+keywords:
+    - protocol
+    - ddnet
+    - teeworlds
+    - packet header
+    - chunk header
+    - token
+    - handshake
+---
+
 # Teeworlds 0.6 / DDNet Protocol Definition
+
+Use this document for wire protocol details only. For input semantics and replay timing, read [INPUT_AND_REPLAY.md](INPUT_AND_REPLAY.md).
+
+## When To Read
+
+Read this document when you need:
+
+1. packet header and chunk layout,
+2. handshake and token rules,
+3. message field order or protocol corrections.
+
+## Not For
+
+Do not use this document for:
+
+1. jump or hook semantics,
+2. replay controller logic,
+3. ghost replay experiment history.
 
 > **Sources:** [chillerdragon docs](https://chillerdragon.github.io/teeworlds-protocol/06/),
 > [DDNet network.cpp](https://github.com/ddnet/ddnet/blob/master/src/engine/shared/network.cpp),

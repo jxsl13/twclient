@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.9.9
-	github.com/jxsl13/twmap v0.2.1
+	github.com/jxsl13/twmap v0.3.0
 	github.com/teeworlds-go/huffman/v2 v2.0.0
 	github.com/teeworlds-go/varint v0.1.0
 	gorgonia.org/gorgonia v0.9.18

@@ -171,10 +171,7 @@ func (ss *SnapStorage) updateRaceTime(gameTick int) {
 	ss.raceTime.CurrentTick = gameTick
 
 	if raceActive {
-		raceTicks := gameTick + ss.gameInfo.WarmupTimer
-		if raceTicks < 0 {
-			raceTicks = 0
-		}
+		raceTicks := max(gameTick+ss.gameInfo.WarmupTimer, 0)
 		ss.raceTime.TickBased = time.Duration(raceTicks) * tickDuration
 		ss.raceTime.Active = true
 

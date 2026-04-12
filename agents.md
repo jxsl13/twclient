@@ -1,8 +1,20 @@
-# Teeworlds Protocol Fuzzer – Agent Instructions
+# twclient – Agent Instructions
+
+This project implements a Teeworlds 0.6/0.7 protocol client and ML training bot in Go.
+For codebase navigation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — it contains the package dependency graph, key types per package, data flow diagrams, and cross-cutting concerns.
+
+## Key conventions
+
+- **Always** consult `docs/PROTOCOL.md` before implementing or modifying protocol logic.
+- DDNet uses the **0.6.4-based** protocol with **TKEN security token extension** (not vanilla 0.6.5 header tokens).
+- Security tokens are **appended to packet payload**, not placed in the header.
+- Chunk header Split = 4 for 0.6, Split = 6 for 0.7.
+- All integers are varint-encoded (ESDDDDDD EDDDDDDD ...).
+- Strings are null-terminated C strings.
 
 ## Protocol Reference
 
-**Always** read [PROTOCOL.md](PROTOCOL.md) before any protocol work.
+**Always** read [docs/PROTOCOL.md](docs/PROTOCOL.md) before any protocol work.
 It contains the authoritative Mermaid diagrams for:
 - Packet header layouts (0.6.4/DDNet vs 0.6.5 vs 0.7)
 - Chunk header bit packing (Split=4 for 0.6, Split=6 for 0.7)
@@ -13,7 +25,7 @@ It contains the authoritative Mermaid diagrams for:
 
 ## Protocol Definition Improvement Process
 
-The protocol definition in `PROTOCOL.md` is a **living document**.
+The protocol definition in `docs/PROTOCOL.md` is a **living document**.
 Follow this process when discovering new information:
 
 ### Step 1: Identify discrepancy
@@ -32,7 +44,7 @@ When a test fails, a connection drops, or behavior differs from documentation:
 3. **teeworlds-go/protocol** (Go reference implementation for 0.7):
    - https://github.com/teeworlds-go/protocol
 
-### Step 3: Update PROTOCOL.md
+### Step 3: Update docs/PROTOCOL.md
 - Fix the affected diagram or table
 - Add a row to the **Revision Log** at the bottom with:
   - Date
@@ -78,6 +90,18 @@ DDNet appends the security token to `m_aChunkData` **before** attempting huffman
 This means the token gets compressed along with the chunk data.
 
 ## Development Commands
+
+### Reuse Before Reimplementing
+
+Before writing any helper function, constant, or utility from scratch, **search the existing codebase first** — especially the `packet/` package. Common things already defined there include:
+
+- Physics constants (gravity, hook parameters, tee sizes, velocities)
+- Input types and constructors (`PlayerInput`, `Direction`, `JumpState`, `HookState`, `Weapon`, etc.)
+- Coordinate/tile conversion helpers
+- Varint encoding/decoding
+- Message packing utilities
+
+Run `grep -r "YourThing" packet/ replay/ client/` or use semantic search before creating a new function. Duplicating existing helpers leads to drift and bugs.
 
 ```bash
 # Build everything
