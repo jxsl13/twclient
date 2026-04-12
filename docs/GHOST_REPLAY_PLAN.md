@@ -38,6 +38,20 @@ Do not use this document for:
 2. [INPUT_AND_REPLAY.md](INPUT_AND_REPLAY.md)
 3. [PROTOCOL.md](PROTOCOL.md) only when wire-level detail is needed
 
+## Research Before Implementing
+
+Before starting any new implementation approach, consider whether existing research applies.
+Relevant areas include game physics simulation, trajectory tracking, control theory, and inverse kinematics in games.
+
+Useful starting points:
+
+- academic papers on trajectory following and model-predictive control in discrete physics environments,
+- game development literature on deterministic replay and input reconstruction,
+- papers on edge-triggered input inference from position-only observations,
+- DDNet and Teeworlds forum posts or source-code comments that describe the intended replay semantics.
+
+If a paper or external source informs a new approach, note it in the experiment hypothesis so the reasoning is traceable.
+
 ## Purpose
 
 Track the shortest path from the current replay implementation to a reliable live Tutorial ghost finish.

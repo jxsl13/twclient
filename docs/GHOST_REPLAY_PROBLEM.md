@@ -43,6 +43,9 @@ Before starting another ghost replay implementation attempt:
 2. Check the failed-approach log.
 3. Do not retry a previously failed approach unchanged.
 4. If an old idea is retried with a materially different mechanism, state that difference explicitly in the new experiment notes.
+5. Consider whether online research or scientific papers in related areas could inform the approach before writing any code.
+   Relevant areas include control theory, game physics simulation, deterministic replay, trajectory following, and inverse-input inference.
+   If an external source is used, note the reference in the experiment entry so the reasoning is traceable and can be revisited.
 
 For every future failed or partially failed approach, append a new entry with an ISO 8601 timestamp including timezone.
 
