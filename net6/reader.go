@@ -167,6 +167,16 @@ func (s *Session) processPayload(payload []byte) {
 				_ = s.SendVitalMsg(SysPingReply())
 			case MsgSysInputTiming:
 				s.processInputTiming(msgData)
+			case MsgSysRconLine:
+				s.processRconLine(msgData)
+			case MsgSysRconAuthStatus:
+				s.processRconAuthStatus(msgData)
+			case MsgSysRconCmdAdd:
+				s.processRconCmdAdd(msgData)
+			case MsgSysRconCmdRem:
+				s.processRconCmdRem(msgData)
+			case MsgSysError:
+				s.processServerError(msgData)
 			case MsgSysMapChange:
 				info, err := packet.ParseMapChangePayload(msgData)
 				if err == nil {

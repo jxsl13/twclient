@@ -76,6 +76,30 @@ func TestProcessVoteSetAndStatus(t *testing.T) {
 	}
 }
 
+func TestProcessSysEvents(t *testing.T) {
+	s := newTestSession()
+
+	s.processRconLine(packer.PackStr("[server]: hello"))
+	if e, ok := recv(t, s).(packet.EventRconLine); !ok || e.Line != "[server]: hello" {
+		t.Errorf("rcon line decode wrong: %#v", e)
+	}
+
+	s.processRconAuthStatus(packInts(1))
+	if e, ok := recv(t, s).(packet.EventRconAuth); !ok || !e.Authed {
+		t.Errorf("rcon auth decode wrong: %#v", e)
+	}
+
+	s.processRconCmdAdd(append(append(packer.PackStr("kick"), packer.PackStr("kick a player")...), packer.PackStr("i?r")...))
+	if e, ok := recv(t, s).(packet.EventRconCmd); !ok || e.Op != packet.RconCmdAdd || e.Cmd != "kick" {
+		t.Errorf("rcon cmd add decode wrong: %#v", e)
+	}
+
+	s.processServerError(packer.PackStr("wrong password"))
+	if e, ok := recv(t, s).(packet.EventServerError); !ok || e.Msg != "wrong password" {
+		t.Errorf("server error decode wrong: %#v", e)
+	}
+}
+
 func TestProcessEmoticonBroadcast(t *testing.T) {
 	s := newTestSession()
 	s.processEmoticon(packInts(6, 2))

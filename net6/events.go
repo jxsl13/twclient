@@ -206,3 +206,60 @@ func (s *Session) processVoteOptionListAdd(data []byte) {
 		s.emit(packet.EventVoteOption{Op: packet.VoteOptionAdd, Desc: desc})
 	}
 }
+
+// --- system messages ---
+
+func (s *Session) processRconLine(data []byte) {
+	u := packer.NewUnpacker(data)
+	line, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventRconLine{Line: line})
+}
+
+// processRconAuthStatus decodes NETMSG_RCON_AUTH_STATUS: m_Authed and an
+// optional command-list flag. Level is reported as the authed value.
+func (s *Session) processRconAuthStatus(data []byte) {
+	u := packer.NewUnpacker(data)
+	authed, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventRconAuth{Authed: authed != 0, Level: authed})
+}
+
+func (s *Session) processRconCmdAdd(data []byte) {
+	u := packer.NewUnpacker(data)
+	name, err := u.GetString()
+	if err != nil {
+		return
+	}
+	help, err := u.GetString()
+	if err != nil {
+		return
+	}
+	params, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventRconCmd{Op: packet.RconCmdAdd, Cmd: name, Help: help, Params: params})
+}
+
+func (s *Session) processRconCmdRem(data []byte) {
+	u := packer.NewUnpacker(data)
+	name, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventRconCmd{Op: packet.RconCmdRemove, Cmd: name})
+}
+
+func (s *Session) processServerError(data []byte) {
+	u := packer.NewUnpacker(data)
+	msg, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventServerError{Msg: msg})
+}
