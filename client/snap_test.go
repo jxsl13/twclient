@@ -35,6 +35,21 @@ func charItem(id, hooked, weapon int) packet.SnapItem {
 	return packet.SnapItem{TypeID: net6.ObjCharacter, ID: id, Fields: f}
 }
 
+// charItemFull builds a character item with all motion-relevant fields.
+func charItemFull(id int, c CharacterState) packet.SnapItem {
+	f := make([]int, net6.SizeCharacter)
+	f[1] = c.X
+	f[2] = c.Y
+	f[6] = c.Direction
+	f[7] = c.Jumped
+	f[8] = c.HookedPlayer
+	f[9] = c.HookState
+	f[19] = c.Weapon
+	f[20] = c.Emote
+	f[21] = c.AttackTick
+	return packet.SnapItem{TypeID: net6.ObjCharacter, ID: id, Fields: f}
+}
+
 func countEvents[E packet.Event](evs []packet.Event) int {
 	n := 0
 	for _, e := range evs {
@@ -118,5 +133,59 @@ func TestDeriveEventsCore(t *testing.T) {
 	ev = ss.deriveEvents()
 	if got := countEvents[packet.EventPlayerLeaveSight](ev); got != 1 {
 		t.Errorf("snap3: want 1 leave-sight, got %d", got)
+	}
+}
+
+// V13: per-player motion events (move throttled, jump, dir, attack, weapon,
+// hook, emote).
+func TestDeriveEventsMotion(t *testing.T) {
+	var ss SnapStorage
+	ss.localCID = 1
+
+	base := CharacterState{X: 100, Y: 100}
+	ss.processSnapshot(&packet.Snapshot{Tick: 1, Items: []packet.SnapItem{
+		charItemFull(2, base),
+	}})
+	ss.deriveEvents() // enter-sight only
+
+	// Player 2: moves far, jumps, changes dir, fires, swaps weapon, hooks, emotes.
+	next := CharacterState{
+		X: 200, Y: 100, // dx=100 >= threshold
+		Direction:    1,
+		Jumped:       1,
+		Weapon:       3,
+		Emote:        2,
+		HookState:    1,
+		HookedPlayer: 5,
+		AttackTick:   10,
+	}
+	ss.processSnapshot(&packet.Snapshot{Tick: 2, Items: []packet.SnapItem{
+		charItemFull(2, next),
+	}})
+	ev := ss.deriveEvents()
+
+	for name, got := range map[string]int{
+		"move":   countEvents[packet.EventPlayerMove](ev),
+		"jump":   countEvents[packet.EventPlayerJump](ev),
+		"dir":    countEvents[packet.EventPlayerDir](ev),
+		"attack": countEvents[packet.EventPlayerAttack](ev),
+		"weapon": countEvents[packet.EventPlayerWeapon](ev),
+		"hook":   countEvents[packet.EventPlayerHook](ev),
+		"emote":  countEvents[packet.EventPlayerEmote](ev),
+	} {
+		if got != 1 {
+			t.Errorf("motion %s: want 1, got %d", name, got)
+		}
+	}
+
+	// A sub-threshold move must not emit EventPlayerMove.
+	tiny := next
+	tiny.X = next.X + 1 // dx=1 < threshold
+	ss.processSnapshot(&packet.Snapshot{Tick: 3, Items: []packet.SnapItem{
+		charItemFull(2, tiny),
+	}})
+	ev = ss.deriveEvents()
+	if got := countEvents[packet.EventPlayerMove](ev); got != 0 {
+		t.Errorf("sub-threshold move should not emit, got %d", got)
 	}
 }

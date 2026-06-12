@@ -170,7 +170,61 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 		}
 	}
 
+	// Per-visible-player motion/state changes (V13). Only for characters
+	// present in both snapshots so we have a baseline to diff against.
+	for id, c := range cur {
+		p, ok := prev[id]
+		if !ok {
+			continue
+		}
+
+		// Movement, throttled by a minimum delta to avoid per-tick flooding.
+		if dx, dy := c.X-p.X, c.Y-p.Y; abs(dx)+abs(dy) >= moveEventThreshold {
+			evs = append(evs, packet.EventPlayerMove{ClientID: id, X: c.X, Y: c.Y})
+		}
+		// Jump: a new jump bit set since last snapshot.
+		if c.Jumped&^p.Jumped != 0 {
+			evs = append(evs, packet.EventPlayerJump{ClientID: id})
+		}
+		// Movement direction change (-1/0/1).
+		if c.Direction != p.Direction {
+			evs = append(evs, packet.EventPlayerDir{ClientID: id, Direction: c.Direction})
+		}
+		// Weapon fired: AttackTick advanced.
+		if c.AttackTick > p.AttackTick {
+			evs = append(evs, packet.EventPlayerAttack{ClientID: id, Weapon: packet.Weapon(c.Weapon)})
+		}
+		// Active weapon swap (others; the local change is EventWeaponChange).
+		if id != ss.localCID && c.Weapon != p.Weapon {
+			evs = append(evs, packet.EventPlayerWeapon{ClientID: id, Weapon: packet.Weapon(c.Weapon)})
+		}
+		// Hook state/target transition (generalizes grab/release/hook-by).
+		if c.HookState != p.HookState || c.HookedPlayer != p.HookedPlayer {
+			evs = append(evs, packet.EventPlayerHook{
+				ClientID:  id,
+				HookState: c.HookState,
+				HookedID:  c.HookedPlayer,
+			})
+		}
+		// Emote change.
+		if c.Emote != p.Emote {
+			evs = append(evs, packet.EventPlayerEmote{ClientID: id, Emote: c.Emote})
+		}
+	}
+
 	return evs
+}
+
+// moveEventThreshold is the minimum Manhattan position delta (world units)
+// before an EventPlayerMove fires, throttling the otherwise per-tick stream
+// of position updates (V13).
+const moveEventThreshold = 16
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (ss *SnapStorage) raceTimeState() RaceTime {
