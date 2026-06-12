@@ -205,7 +205,7 @@ smoothing: on reconcile lerp prev→new predicted over window. ⊥ teleport visi
 ```
 id|status|task|cites
 T0|x|migrate NewCollision(twmap.Map)→physics.Collision out of replay into physics/ (or client/)|V8,I.removal
-T1|.|remove all replay: del replay/ cmd/replay/ docs/GHOST_REPLAY_*; KEEP physics/; go build+test ./... green|V6,V8,I.removal
+T1|x|remove all replay: del replay/ cmd/replay/ docs/GHOST_REPLAY_*; KEEP physics/; go build+test ./... green|V6,V8,I.removal
 T2|x|research ddnet server events → §I event catalog finalized (this doc); whisper resolved V15|I.catalog
 T3|.|define event structs (ChatEvent…WeaponChangeEvent) impl packet.Event|V1,V4,I.catalog
 T4|.|parse msg-derived events in net6/reader.go processPayload switch + net7 equiv → SendEvent|V1,V4,V15,C5
