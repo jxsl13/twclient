@@ -167,6 +167,8 @@ func (s *Session) processPayload(payload []byte) {
 				_ = s.SendVitalMsg(SysPingReply())
 			case MsgSysInputTiming:
 				s.processInputTiming(msgData)
+			case MsgSysEx:
+				s.processEx(msgData)
 			case MsgSysRconLine:
 				s.processRconLine(msgData)
 			case MsgSysRconAuthStatus:

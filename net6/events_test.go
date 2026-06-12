@@ -76,6 +76,45 @@ func TestProcessVoteSetAndStatus(t *testing.T) {
 	}
 }
 
+func TestProcessExMessages(t *testing.T) {
+	s := newTestSession()
+
+	// KillMsgTeam via the full EX path (UUID + body).
+	body := packInts(3, 7)
+	msg := append(append([]byte{}, uuidSvKillMsgTeam[:]...), body...)
+	s.processEx(msg)
+	if e, ok := recv(t, s).(packet.EventKillMsgTeam); !ok || e.Team != 3 || e.First != 7 {
+		t.Errorf("ext killmsgteam decode wrong: %#v", e)
+	}
+
+	// CommandInfo: name, args, help (note wire order).
+	ci := append(uuidSvCommandInfo[:], append(append(packer.PackStr("me"), packer.PackStr("")...), packer.PackStr("show name")...)...)
+	s.processEx(ci)
+	if e, ok := recv(t, s).(packet.EventCommandInfo); !ok || e.Name != "me" || e.Help != "show name" {
+		t.Errorf("ext commandinfo decode wrong: %#v", e)
+	}
+
+	// TeamsState: raw per-client team values.
+	ts := append(uuidSvTeamsState[:], packInts(0, 5, 0, 5)...)
+	s.processEx(ts)
+	e, ok := recv(t, s).(packet.EventTeamsState)
+	if !ok || e.Team[1] != 5 || e.Team[3] != 5 {
+		t.Errorf("ext teamsstate decode wrong: %#v", e)
+	}
+	if _, present := e.Team[0]; present {
+		t.Errorf("teamsstate should omit team-0 players: %#v", e)
+	}
+
+	// Unknown UUID is ignored (no event, no panic).
+	var unknown [16]byte
+	s.processEx(append(unknown[:], packInts(1)...))
+	select {
+	case ev := <-s.reader.eventCh:
+		t.Errorf("unknown ext UUID produced an event: %#v", ev)
+	default:
+	}
+}
+
 func TestProcessSysEvents(t *testing.T) {
 	s := newTestSession()
 
