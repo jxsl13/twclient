@@ -225,9 +225,9 @@ T7|x|tests: registry concurrency, each event fires, unregister idempotent; cross
 T8|x|input ring buffer keyed by tick (extend inputRecord); capture local clientID from snap|V9,I.predict
 T9|x|PredictedWorld: two-world (GameWorld snap-seed + PredictedWorld copy→Tick to predTick); own re-sim inputs; Tuning+WorldConfig from game-type|V9,V9b,V10b,V11,I.predict
 T9a|x|antiping others: extrapolate non-local chars (reuse last intent, Core.Tick); PredictedCharacters() map|V9a,I.predict
-T9b|.|projectile/laser prediction (CProjectile sim) → PredictedProjectiles()|V9,I.predict
+T9b|-|projectile/laser prediction — DEFERRED (B2): needs per-weapon tuning in physics.Tuning|V9,I.predict
 T10|x|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
-T10a|.|reconcile smoothing: lerp rendered pos prev→new predicted over window; WithAntiping Option|V10a,V11,I.predict
+T10a|-|reconcile smoothing — DEFERRED (B3): render-only, no consumer in headless client|V10a,V11,I.predict
 T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
 ```
 order: T0 → T1 → T2 → T3 → T5 → ((T4 → T4a → T4b → T4c → T4d → T4e) ∥ (T5a → T5b → T5c → T5d)) → T6 → (T8 → T9 → T9a → T9b → T10 → T10a) → T7,T11.
@@ -244,4 +244,6 @@ catalog + prediction verified against pulled sources:
 ```
 id|date|cause|fix
 B1|2026-06-13|T4e assumed DDNet ext snap-objects (DDNetCharacter/Player/SpecChar/Finish) directly decodable, but snapshot uses UUID-indexed EX-type indirection (NETOBJTYPE_EX) absent from net6/snap decoder. impl blind = silent corruption risk.|split: T4e=DamageInd (vanilla obj, done); T4e2=ext-obj infra deferred until snapshot EX-type decode added to net6/snap.go + packet snap delta
+B2|2026-06-13|T9b "CProjectile sim" needs per-weapon-type curvature+speed (gun/shotgun) to scale projectile motion. physics.Tuning only models grenade (built for replay rocket-jump). linear scaling others = wrong positions, misleading for bot.|defer T9b until physics.Tuning extended w/ GunSpeed/Curvature, ShotgunSpeed/Curvature (DDNet tuning.h). grenade-only predict insufficient for full antiping.
+B3|2026-06-13|T10a reconcile smoothing (lerp prev→cur predicted rendered pos) is render-only; headless client has no renderer to consume lerped pos. building it = dead code.|defer T10a as out-of-scope for headless; revisit if a render/replay consumer is added. prediction itself (T9/T9a/T10) already reconciles to authoritative state each snap.
 ```
