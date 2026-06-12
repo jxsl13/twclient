@@ -14,6 +14,7 @@ type PredictedWorld struct {
 	col      *physics.Collision
 	tun      physics.Tuning
 	cores    map[int]*physics.Core
+	seed     map[int]CharacterState
 	baseTick int
 }
 
@@ -24,10 +25,12 @@ func newPredictedWorld(col *physics.Collision, tun physics.Tuning, baseTick int,
 		col:      col,
 		tun:      tun,
 		cores:    make(map[int]*physics.Core, len(chars)),
+		seed:     make(map[int]CharacterState, len(chars)),
 		baseTick: baseTick,
 	}
 	for cid, ch := range chars {
 		w.cores[cid] = seedCore(col, tun, ch)
+		w.seed[cid] = ch
 	}
 	return w
 }
@@ -60,6 +63,51 @@ func (w *PredictedWorld) advanceOwn(localCID, predTick int, inputs *predInputBuf
 		}
 		core.Step(inputToPhysics(in))
 	}
+}
+
+// advanceOthers extrapolates every non-local character to predTick. With no
+// inputs available for other players, DDNet reuses their last-seen intent
+// (movement direction and hook); we hold that constant over the window (V9a).
+// Accuracy is lower than the local re-sim and is corrected on the next
+// snapshot reconcile.
+func (w *PredictedWorld) advanceOthers(localCID, predTick int) {
+	steps := predTick - w.baseTick
+	if steps <= 0 {
+		return
+	}
+	for cid, core := range w.cores {
+		if cid == localCID {
+			continue
+		}
+		in := extrapolatedInput(w.seed[cid])
+		for i := 0; i < steps; i++ {
+			core.Step(in)
+		}
+	}
+}
+
+// extrapolatedInput reconstructs a held input from a character's last-seen
+// state: keep walking in the same direction and keep hooking if the hook was
+// active.
+func extrapolatedInput(ch CharacterState) physics.Input {
+	hooking := ch.HookState == physics.HookFlying || ch.HookState == physics.HookGrabbed
+	return physics.Input{
+		Direction: ch.Direction,
+		TargetX:   ch.HookDx,
+		TargetY:   ch.HookDy,
+		Hook:      hooking,
+	}
+}
+
+// characters returns the predicted state for every character in the world.
+func (w *PredictedWorld) characters() map[int]CharacterState {
+	out := make(map[int]CharacterState, len(w.cores))
+	for cid := range w.cores {
+		if st, ok := w.character(cid); ok {
+			out[cid] = st
+		}
+	}
+	return out
 }
 
 // character returns the predicted character state for cid, or false if the

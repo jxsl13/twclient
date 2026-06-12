@@ -49,6 +49,40 @@ func TestPredictedWorldReSimDeterministic(t *testing.T) {
 	}
 }
 
+// V9a: other players are extrapolated (held direction) while the local player
+// is left for the input-driven re-sim.
+func TestPredictedWorldExtrapolateOthers(t *testing.T) {
+	col := openCollision()
+	tun := physics.DefaultTuning()
+	base := 100
+	chars := map[int]CharacterState{
+		1: {X: 1000, Y: 1000, Direction: 1}, // local
+		2: {X: 2000, Y: 1000, Direction: 1}, // other, walking right
+		3: {X: 3000, Y: 1000, Direction: 0}, // other, standing
+	}
+	w := newPredictedWorld(col, tun, base, chars)
+	w.advanceOthers(1, base+10)
+
+	// Other player 2 walked right; player 3 stayed put (horizontally).
+	p2, _ := w.character(2)
+	if p2.X <= 2000 {
+		t.Errorf("player 2 should have walked right, X=%d", p2.X)
+	}
+	p3, _ := w.character(3)
+	if p3.X != 3000 {
+		t.Errorf("standing player 3 should not move horizontally, X=%d", p3.X)
+	}
+	// Local player 1 must be untouched by advanceOthers.
+	p1, _ := w.character(1)
+	if p1.X != 1000 {
+		t.Errorf("local player must not be extrapolated by advanceOthers, X=%d", p1.X)
+	}
+
+	if all := w.characters(); len(all) != 3 {
+		t.Errorf("characters() should return all 3, got %d", len(all))
+	}
+}
+
 // V9: with predTick == baseTick there is nothing to re-sim; the predicted
 // state equals the seed.
 func TestPredictedWorldNoAdvance(t *testing.T) {
