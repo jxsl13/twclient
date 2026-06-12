@@ -136,6 +136,38 @@ func TestDeriveEventsCore(t *testing.T) {
 	}
 }
 
+// V14: transient world-event objects + projectile/laser fired-once.
+func TestDeriveEventsTransient(t *testing.T) {
+	var ss SnapStorage
+
+	// Snap 1: an explosion, a death, and a new projectile (id 100).
+	ss.processSnapshot(&packet.Snapshot{Tick: 1, Items: []packet.SnapItem{
+		{TypeID: net6.ObjExplosion, ID: 1, Fields: []int{50, 60}},
+		{TypeID: net6.ObjDeath, ID: 2, Fields: []int{10, 20, 3}},
+		{TypeID: net6.ObjProjectile, ID: 100, Fields: []int{0, 0, 1, 1, 4, 0}},
+	}})
+	ev := ss.deriveEvents()
+	if got := countEvents[packet.EventExplosion](ev); got != 1 {
+		t.Errorf("want 1 explosion, got %d", got)
+	}
+	if got := countEvents[packet.EventDeath](ev); got != 1 {
+		t.Errorf("want 1 death, got %d", got)
+	}
+	if got := countEvents[packet.EventProjectileFired](ev); got != 1 {
+		t.Errorf("snap1: want 1 projectile-fired, got %d", got)
+	}
+
+	// Snap 2: projectile 100 persists (no re-fire); projectile 101 is new.
+	ss.processSnapshot(&packet.Snapshot{Tick: 2, Items: []packet.SnapItem{
+		{TypeID: net6.ObjProjectile, ID: 100, Fields: []int{1, 1, 1, 1, 4, 0}},
+		{TypeID: net6.ObjProjectile, ID: 101, Fields: []int{5, 5, 2, 0, 2, 0}},
+	}})
+	ev = ss.deriveEvents()
+	if got := countEvents[packet.EventProjectileFired](ev); got != 1 {
+		t.Errorf("snap2: want 1 projectile-fired (only new id), got %d", got)
+	}
+}
+
 // V13: per-player motion events (move throttled, jump, dir, attack, weapon,
 // hook, emote).
 func TestDeriveEventsMotion(t *testing.T) {

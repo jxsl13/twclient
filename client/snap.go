@@ -110,8 +110,15 @@ type SnapStorage struct {
 	// keyed by client ID. Snap-derived events diff these (V12).
 	characters     map[int]CharacterState
 	prevCharacters map[int]CharacterState
-	gameInfo       GameInfoState
-	raceTime       RaceTime
+	// lastSnap is the most recently processed snapshot, used by deriveEvents
+	// to read transient event-objects (explosions, deaths, projectiles, …).
+	lastSnap *packet.Snapshot
+	// prevProjectiles/prevLasers hold the entity IDs seen last snapshot so a
+	// newly appearing projectile/laser can be reported as "fired" (V14).
+	prevProjectiles map[int]struct{}
+	prevLasers      map[int]struct{}
+	gameInfo        GameInfoState
+	raceTime        RaceTime
 }
 
 // charactersCopy returns a shallow copy of the latest per-client character
@@ -133,9 +140,6 @@ func (ss *SnapStorage) charactersCopy() map[int]CharacterState {
 func (ss *SnapStorage) deriveEvents() []packet.Event {
 	cur := ss.characters
 	prev := ss.prevCharacters
-	if len(cur) == 0 && len(prev) == 0 {
-		return nil
-	}
 
 	var evs []packet.Event
 
@@ -212,6 +216,66 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 		}
 	}
 
+	evs = append(evs, ss.deriveTransient()...)
+
+	return evs
+}
+
+// deriveTransient emits events for the one-tick world-event objects in the
+// latest snapshot (explosion/spawn/death/hammer-hit/sound) and for newly
+// appearing projectiles/lasers (V14).
+func (ss *SnapStorage) deriveTransient() []packet.Event {
+	if ss.lastSnap == nil {
+		return nil
+	}
+	var evs []packet.Event
+
+	curProj := make(map[int]struct{})
+	curLaser := make(map[int]struct{})
+
+	for _, it := range ss.lastSnap.Items {
+		f := it.Fields
+		switch it.TypeID {
+		case net6.ObjExplosion:
+			if len(f) >= net6.SizeExplosion {
+				evs = append(evs, packet.EventExplosion{X: f[0], Y: f[1]})
+			}
+		case net6.ObjSpawn:
+			if len(f) >= net6.SizeSpawn {
+				evs = append(evs, packet.EventSpawn{X: f[0], Y: f[1]})
+			}
+		case net6.ObjHammerHit:
+			if len(f) >= net6.SizeHammerHit {
+				evs = append(evs, packet.EventHammerHit{X: f[0], Y: f[1]})
+			}
+		case net6.ObjDeath:
+			if len(f) >= net6.SizeDeath {
+				evs = append(evs, packet.EventDeath{X: f[0], Y: f[1], ClientID: f[2]})
+			}
+		case net6.ObjSoundWorld:
+			if len(f) >= net6.SizeSoundWorld {
+				evs = append(evs, packet.EventSoundWorld{X: f[0], Y: f[1], SoundID: f[2]})
+			}
+		case net6.ObjProjectile:
+			curProj[it.ID] = struct{}{}
+			if _, seen := ss.prevProjectiles[it.ID]; !seen && len(f) >= net6.SizeProjectile {
+				evs = append(evs, packet.EventProjectileFired{
+					X: f[0], Y: f[1], VelX: f[2], VelY: f[3],
+					Type: packet.Weapon(f[4]), Owner: -1,
+				})
+			}
+		case net6.ObjLaser:
+			curLaser[it.ID] = struct{}{}
+			if _, seen := ss.prevLasers[it.ID]; !seen && len(f) >= net6.SizeLaser {
+				evs = append(evs, packet.EventLaserFired{
+					X: f[0], Y: f[1], FromX: f[2], FromY: f[3], Owner: -1,
+				})
+			}
+		}
+	}
+
+	ss.prevProjectiles = curProj
+	ss.prevLasers = curLaser
 	return evs
 }
 
@@ -247,6 +311,7 @@ func (ss *SnapStorage) setDDRaceTime(timeCentis, checkCentis int, finish bool) {
 func (ss *SnapStorage) processSnapshot(snap *packet.Snapshot) {
 	ss.lastTick = snap.Tick
 	ss.lastSnapTime = time.Now()
+	ss.lastSnap = snap
 	ss.updateFromSnap(snap)
 }
 
