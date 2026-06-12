@@ -385,11 +385,19 @@ func (c *Client) eventLoop(ctx context.Context) {
 func (c *Client) handleEvent(ev packet.Event) {
 	switch e := ev.(type) {
 	case packet.EventSnapshot:
+		var derived []packet.Event
 		c.mu.Lock()
 		c.snap.processSnapshot(e.Snap)
+		if e.Snap != nil {
+			derived = c.snap.deriveEvents()
+		}
 		c.mu.Unlock()
 		if e.Snap != nil {
 			c.predTime.OnSnapshot(e.Snap.Tick)
+		}
+		// Dispatch snap-derived events after releasing mu (V2).
+		for _, dev := range derived {
+			c.callbacks.dispatch(c, dev)
 		}
 	case packet.EventRaceFinish:
 		c.mu.Lock()

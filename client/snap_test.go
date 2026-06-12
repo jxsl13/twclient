@@ -26,6 +26,25 @@ func charSnap(tick int, ids ...int) *packet.Snapshot {
 	return s
 }
 
+// charItem builds a character snap item with explicit hooked-player and weapon.
+func charItem(id, hooked, weapon int) packet.SnapItem {
+	f := make([]int, net6.SizeCharacter)
+	f[1] = id * 10 // X
+	f[8] = hooked  // HookedPlayer
+	f[19] = weapon // Weapon
+	return packet.SnapItem{TypeID: net6.ObjCharacter, ID: id, Fields: f}
+}
+
+func countEvents[E packet.Event](evs []packet.Event) int {
+	n := 0
+	for _, e := range evs {
+		if _, ok := e.(E); ok {
+			n++
+		}
+	}
+	return n
+}
+
 // V12: SnapStorage tracks all players + a previous-snapshot copy for diffing.
 func TestSnapStorageAllCharsAndPrev(t *testing.T) {
 	var ss SnapStorage
@@ -57,5 +76,47 @@ func TestSnapStorageAllCharsAndPrev(t *testing.T) {
 	}
 	if _, ok := ss.prevCharacters[3]; ok {
 		t.Error("prevCharacters should not yet contain player 3")
+	}
+}
+
+// V5/V13: snap-derived core events — presence, hooked-by, weapon change.
+func TestDeriveEventsCore(t *testing.T) {
+	var ss SnapStorage
+	ss.localCID = 1
+
+	// Snap 1: local (1) and player 2 enter sight; no hook, weapon 0.
+	s1 := &packet.Snapshot{Tick: 1, Items: []packet.SnapItem{
+		charItem(1, 0, 0),
+		charItem(2, 0, 0),
+	}}
+	ss.processSnapshot(s1)
+	ev := ss.deriveEvents()
+	if got := countEvents[packet.EventPlayerEnterSight](ev); got != 2 {
+		t.Errorf("snap1: want 2 enter-sight, got %d", got)
+	}
+
+	// Snap 2: same set; player 2 hooks local (1); local weapon 0 -> 5 (laser).
+	s2 := &packet.Snapshot{Tick: 2, Items: []packet.SnapItem{
+		charItem(1, 0, 5),
+		charItem(2, 1, 0),
+	}}
+	ss.processSnapshot(s2)
+	ev = ss.deriveEvents()
+	if got := countEvents[packet.EventHookedBy](ev); got != 1 {
+		t.Errorf("snap2: want 1 hooked-by, got %d (%+v)", got, ev)
+	}
+	if got := countEvents[packet.EventWeaponChange](ev); got != 1 {
+		t.Errorf("snap2: want 1 weapon-change, got %d (%+v)", got, ev)
+	}
+	if got := countEvents[packet.EventPlayerEnterSight](ev); got != 0 {
+		t.Errorf("snap2: want 0 enter-sight, got %d", got)
+	}
+
+	// Snap 3: player 2 leaves sight.
+	s3 := &packet.Snapshot{Tick: 3, Items: []packet.SnapItem{charItem(1, 0, 5)}}
+	ss.processSnapshot(s3)
+	ev = ss.deriveEvents()
+	if got := countEvents[packet.EventPlayerLeaveSight](ev); got != 1 {
+		t.Errorf("snap3: want 1 leave-sight, got %d", got)
 	}
 }

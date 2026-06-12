@@ -124,6 +124,55 @@ func (ss *SnapStorage) charactersCopy() map[int]CharacterState {
 	return out
 }
 
+// deriveEvents diffs the latest snapshot's character map against the previous
+// one and returns the snap-derived events to dispatch. Caller must hold the
+// Client mutex; the returned events are dispatched after it is released (V2).
+//
+// Covers the core snap-derived events (V5, V13): presence (enter/leave sight),
+// someone hooking the local tee, and the server changing the local weapon.
+func (ss *SnapStorage) deriveEvents() []packet.Event {
+	cur := ss.characters
+	prev := ss.prevCharacters
+	if len(cur) == 0 && len(prev) == 0 {
+		return nil
+	}
+
+	var evs []packet.Event
+
+	// Presence: enter/leave sight (edge-triggered on set membership).
+	for id := range cur {
+		if _, ok := prev[id]; !ok {
+			evs = append(evs, packet.EventPlayerEnterSight{ClientID: id})
+		}
+	}
+	for id := range prev {
+		if _, ok := cur[id]; !ok {
+			evs = append(evs, packet.EventPlayerLeaveSight{ClientID: id})
+		}
+	}
+
+	// Someone hooks the local character: another player's HookedPlayer
+	// transitions to localCID this snapshot.
+	for id, c := range cur {
+		if id == ss.localCID || c.HookedPlayer != ss.localCID {
+			continue
+		}
+		if p, ok := prev[id]; ok && p.HookedPlayer == ss.localCID {
+			continue // already hooking us last snap — edge already fired
+		}
+		evs = append(evs, packet.EventHookedBy{ClientID: id})
+	}
+
+	// Server changed the local player's weapon.
+	if local, ok := cur[ss.localCID]; ok {
+		if p, ok := prev[ss.localCID]; ok && p.Weapon != local.Weapon {
+			evs = append(evs, packet.EventWeaponChange{Weapon: packet.Weapon(local.Weapon)})
+		}
+	}
+
+	return evs
+}
+
 func (ss *SnapStorage) raceTimeState() RaceTime {
 	rt := ss.raceTime
 	if rt.Active && !rt.Finished && !rt.StartedAt.IsZero() {
