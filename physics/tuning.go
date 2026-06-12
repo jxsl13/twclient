@@ -97,8 +97,11 @@ func (t Tuning) ProjectilePos(start, dir Vec2, weapon int, time float32) Vec2 {
 	}
 }
 
-// Weapon ids matching the protocol (also defined in package packet); kept here
-// so physics has no dependency on packet.
+// Weapon ids. CANONICAL source is packet.Weapon; this is the SOLE permitted
+// mirror (SPEC V25), existing only so the low-level physics package keeps no
+// dependency on packet. Values MUST stay in sync with packet.Weapon* — the
+// parity is guarded by a test in package client (which imports both). Do not
+// add further weapon-id duplicates anywhere else.
 const (
 	WeaponGun     = 2
 	WeaponShotgun = 3

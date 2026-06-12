@@ -1,8 +1,8 @@
-# SPEC — twclient server-event callbacks
+# SPEC — twclient: server-event callbacks, antiping prediction, consumer/Frontend interface
 
 ## §G — goal
 
-Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile). First remove all replay functionality (keep `physics/`).
+Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven `Frontend` interface serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept).
 
 ## §C — constraints
 
@@ -117,6 +117,15 @@ E_damage_ind |NetEvent DamageInd  |x,y,angle|. dmg indicator (took/dealt dmg)
 E_finish     |NetEventEx Finish (ext)|—|. finish fx (DDNet)
 ```
 
+D. game / flag / round state (diff `GameInfoState` / `ObjGameData` / `ObjFlag`):
+caveat: 0.6 `GameInfo` flags ≠ 0.7 game-state encoding — reader ! normalize both → same E_round_state. V17.
+```text
+id|detect|requested
+E_round_state |GameStateFlags change (warmup/paused/gameover/roundover)|. round flow
+E_score_change|ObjPlayerInfo .Score delta|. score
+E_flag        |ObjFlag 5 carrier/pos delta (CTF: grab/drop/capture)|. ctf flag
+E_spectarget  |ObjSpectatorInfo target change|. spectate target
+```
 E. snap-ext objects (DDNet NetObjectEx, parsed by UUID — extend snap decode):
 ```text
 id|src ext-obj|detect|requested
@@ -127,33 +136,14 @@ E_player_auth   |DDNetPlayer .m_AuthLevel change (admin/mod login)|. auth level
 E_player_afk    |DDNetPlayer .m_Flags afk/paused/spec bit|? afk/pause
 E_spec_char     |SpecChar ext obj pos (spectated free-view)|? spec pos
 ```
-D. game / flag / round state (diff `GameInfoState` / `ObjGameData` / `ObjFlag`):
-caveat: 0.6 `GameInfo` flags ≠ 0.7 game-state encoding — reader ! normalize both → same E_round_state. V17.
-```text
-id|detect|requested
-E_round_state |GameStateFlags change (warmup/paused/gameover/roundover)|. round flow
-E_score_change|ObjPlayerInfo .Score delta|. score
-E_flag        |ObjFlag 5 carrier/pos delta (CTF: grab/drop/capture)|. ctf flag
-E_spectarget  |ObjSpectatorInfo target change|. spectate target
-```
-scope: FULL — A + B(all) + C + D ship v1. no deferral.
-
-### removal scope (task 1)
-```
-del:  replay/        (all .go, testdata/, ghost/ demo/ convert/ teehistorian/)
-del:  cmd/replay/
-del:  docs/GHOST_REPLAY_*.md
-KEEP: physics/       (general TW sim — prediction engine. orphaned now, used by §I.predict)
-```
-no non-replay importer of `twclient/replay`, `replay/teehistorian` (verified grep). `twclient/physics` consumed only by replay today → kept for prediction.
-! before T1 delete: migrate `NewCollision(m *twmap.Map) *physics.Collision` (`replay/physics_sim.go:22`) into `physics/` (or `client/`) — prediction depends on it, replay/ removed.
+scope: FULL — A + B(all) + C + D + E ship v1. no deferral.
 
 ### client prediction — FULL DDNet antiping
 predict ALL entities (every char + projectiles + lasers + pickups), not own char only. mirror DDNet `CGameWorld` predicted world. own char driven by buffered local inputs; others extrapolated (no input avail). reconcile whole world on each snap. smooth to hide reconcile jumps.
 ```
 type: PredictedWorld (client) — holds physics.Core per char + projectile/laser sim; ticks all forward
-flow: snap @ acked tick T0 → seed world (all chars from snap CharacterCore, projectiles/lasers from objs)
-      → tick world T0→predTick: own char uses inputs[T0..predTick]; others extrapolate (hold dir/hook/vel, run Core.Tick w/ predicted input)
+flow: snap @ acked tick Tack → seed world (all chars from snap CharacterCore, projectiles/lasers from objs)
+      → tick world Tack→predTick: own char uses inputs[Tack..predTick]; others extrapolate (hold dir/hook/vel, run Core.Tick w/ predicted input)
       → predicted states for all cids
 own:    inputs[tick] from ring buffer → exact (V9)
 others: no input → DDNet rule: reuse last-seen intended dir/jump/hook/fire, run Core.Tick; lower accuracy, snap corrects
@@ -161,7 +151,7 @@ api:  func (c *Client) PredictedCharacter() CharacterState           // local, p
 api:  func (c *Client) PredictedCharacters() map[int]CharacterState   // all visible cids, predicted
 api:  func (c *Client) PredictedProjectiles() []ProjectileState       // antiping projectiles
 api:  func (c *Client) WithPrediction(bool) Option / WithAntiping(bool) Option
-dep:  physics.NewCore(col,pos), Core.Tick(physics.Input), Collision (NewCollision migrated), Tuning ← E_tuneparams
+dep:  physics.NewCore(col,pos), Core.Tick(physics.Input), physics.NewCollision(map), Tuning ← E_tuneparams
 ref:  DDNet src/game/client/prediction/ (CGameWorld::Tick, CCharacter::Tick, CProjectile),
       gameclient.cpp OnNewSnapshot reconcile + smoothing (m_aClients[].m_Predicted, antiping smooth)
 ```
@@ -175,6 +165,86 @@ DDNet model (verified `gameclient.cpp`, `prediction/gameworld.cpp`):
 - smoothing gated `m_ClAntiPingSmooth` w/ pos-error + tick-bound checks (`:2271`).
 smoothing: on reconcile lerp prev→new predicted over window. ⊥ teleport visible.
 
+### consumer / agent interface (tick-driven, protocol-unified)
+ONE pluggable interface serves ALL consumers identically: visual UI (render + user input), ML training (ingest per-tick state), ML execution (state→action). Same plug into headless client. Consumer ⊥ see protocol version (V18). Drives off PREDICTED state each tick.
+```
+type: Frontend (consumer) interface — plugged via WithFrontend(f) / SetFrontend(f)
+  OnTick(c *Client, st TickState) []Action   // observe predicted tick → emit actions
+  (optional OnEvent(c, packet.Event) for async server events not tied to a tick)
+
+obs: TickState — COMPLETE observable+predicted state for one tick (V19), self-contained:
+  Tick, IntraTick float (sub-tick for smooth render, V21)
+  LocalID
+  Players   map[int]CharacterState       // predicted pos/vel/hook/weapon/freeze/flags, all visible cids (ONE char type, V25)
+  Projectiles []ProjectileState          // predicted (T9b)
+  Lasers, Pickups, Flags                  // visible entities
+  Map       MapView                       // full static map: all layers + tune-zone (T14, V28)
+  Tuning       physics.Tuning             // default (zone-0) server tuning
+  ActiveTuning physics.Tuning             // tuning resolved at LOCAL self tile (tune-zone, V29)
+  SelfTuneZone int                        // tune-zone index at self
+  GameInfo, RaceTime, Spectating
+  Events    []packet.Event               // events since last tick (chat/kill/etc)
+  (self weapon/health/armor/ammo live in Players[LocalID] — CharacterState, no dup V25)
+
+act: Action — unified action set (V22), protocol-independent. covers full ddnet+0.7 client:
+  ActInput{PlayerInput}          // move/aim/jump/hook/fire/wantedweapon
+  ActChat{Team bool, Msg}        ActWhisper{ToID, Msg}
+  ActEmoticon{Emoticon}          ActKill
+  ActVote{Yes/No}                ActCallVote{Type, Value, Reason}
+  ActSetTeam{Team}               ActSetSpectator{TargetID}
+  (each maps to existing net6/net7 send; reader-side unify like events V17)
+api: func (c *Client) Do(a Action) error   // apply one action (UI input path = ML output path)
+
+render view: MapView + TickState = everything a UI needs to draw predicted+visible world.
+ML view: same TickState = observation vector; Action = policy output. train + exec identical plug.
+smoothing (T10a, now in-scope V21): keep prev+cur PredictedWorld; SmoothedCharacters(intraTick) lerps
+  prev→cur per cid for render between ticks. ref DDNet mix(m_PrevPredicted,m_Predicted,intraTick).
+
+dual cadence (V24) — Frontend declares mode, driver picks loop:
+  TickModeFixed : OnTick once per predicted tick (50Hz, IntraTick=0). ML/training. deterministic.
+  TickModeFrame : OnTick per render frame; IntraTick∈[0,1) from wall-clock between ticks; positions
+                  smoothed. UI/render.
+clean impl: ONE canonical builder `buildTickState(tick) TickState` (IntraTick=0). fixed mode calls it
+  per new tick. frame mode calls it for the latest tick, then overlays SmoothedCharacters(intra) +
+  sets IntraTick — NO duplicate state-assembly. ⊥ two divergent TickState code paths (V24).
+plug: `type Frontend interface { Mode() TickMode; OnTick(*Client, TickState) []Action }`. one builder,
+  two thin loops. headless/ML & UI share everything except the cadence wrapper.
+```
+
+### MapView — environment / collision observation (T14)
+spans the COMPLETE local map (downloaded on connect / cached), NOT the snapshot-visible region (V26). map is fully available offline → window can sit anywhere.
+```
+type: MapView (client) — queryable static map over the WHOLE map. ALL DDNet special-tile layers, not just collision (V28).
+api:  Width, Height int                       // full-map tile bounds
+api:  Tile(tx,ty int) TileClass               // Air|Solid|Unhook|HookThrough|Death|Freeze|Tele|Speedup|Switch|Tune|...
+api:  Solid/Unhook/HookThrough/Death/Freeze/Tele/Speedup/Switch(tx,ty) bool   // OOB → Solid
+api:  TuneZone(tx,ty int) int                 // tune-zone index from map Tune layer (0=default); drives position tuning (V29)
+api:  Window(cx,cy,halfW,halfH int) []TileClass            // fixed (2halfW+1)×(2halfH+1) crop centered (cx,cy); OOB padded Solid
+src:  twmap LayerKind {Game,Front,Tele,Speedup,Switch,Tune} (no new decode — twmap already parses these)
+```
+
+### ML observation (T20) — ego-centric fixed window
+recommended design (V27), answering "what makes sense for ML":
+```
+shape: FIXED multi-channel tensor [C,H,W] every tick (ML needs constant input dims). config size;
+       DEFAULT square N×N tiles (e.g. 64×64); rectangle allowed (TW motion horizontal-biased → wider ok).
+center: ego-centric on predicted self tile (translation-invariant → generalizes across map). arbitrary
+       center also allowed (full map local).
+pad:   out-of-bounds tiles = Solid (wall), never variable size.
+size:  speed/context knob — bigger = more lookahead, slower train; smaller = faster.
+res:   tile-resolution (32px/tile) natural; downsample optional.
+planes (EVERYTHING available, V28):
+  static (MapView.Window): solid, unhook, hookthrough, death, freeze, tele, speedup, switch, tune-zone(index)
+  per-tile tuning (V30): ONE plane per tuning param (gravity, ground/air control+accel+friction, jump
+    impulses, hook length/fire/drag, velramp, …); cell value = TuningAt(tile) of that tile's zone.
+    → model sees the physics each tile imposes, can predict movement on tiles it is about to consume.
+    unknown per-zone values → default(zone-0) fallback; tune-zone index plane still distinguishes zones.
+  dynamic (rasterize TickState): self, other players, projectiles, lasers, pickups, flags, hook lines, doors/draggers (ext)
+scalars (per-tick, appended to obs):
+  self weapon (one-hot), self health/armor/ammo, self vel, self hook state
+  ACTIVE tuning vector at self tile (V29), self tune-zone index, race time, game state flags
+```
+
 ## §V — invariants
 
 - V1: new event types ! implement `packet.Event` (`eventTag()`), emitted via `packet.SendEvent` on `EventCh()`. `packet/event.go`.
@@ -182,12 +252,10 @@ smoothing: on reconcile lerp prev→new predicted over window. ⊥ teleport visi
 - V3: register/unregister ! concurrency-safe (mutex) — caller registers from any goroutine while `eventLoop` reads.
 - V4: ∀ requested event reachable in both 0.6 & 0.7, OR documented version-only. ⊥ silent 0.7 gap.
 - V5: snap-derived events ! computed in `Client.handleEvent` `EventSnapshot` case by diff vs prev `CharacterState`; need stored prev snap + myClientID.
-- V6: removing replay ⊥ break build of `client`, `net6`, `net7`, `packet`, `cmd/racebot`, `cmd/ml`. `go build ./...` + `go test ./...` green after.
 - V7: unregister closure idempotent — 2nd call no-op, ⊥ panic.
-- V8: `NewCollision` migrated to `physics/`/`client/` BEFORE replay deleted. T1 ⊥ orphan prediction dep. build green proves.
 - V9: prediction seeds predicted world from acked snap @ ack tick (all chars from CharacterCore, projectiles/lasers from objs), re-sims forward to predTick. own char uses buffered local inputs[ack..predTick]. ⊥ seed from already-predicted state (no cross-snap drift).
 - V9a: others (cid≠local) predicted by extrapolation — no input avail, reuse last-seen intent (dir/jump/hook/fire) run `Core.Tick`. accuracy < own; ⊥ claim authoritative. snap reconcile corrects each tick.
-- V9b: predicted world uses `Tuning` from latest `E_tuneparams`, ⊥ stale/default tuning → physics mismatch vs server.
+- V9b: predicted world uses `Tuning` from latest `E_tuneparams` (default/zone-0); on tune-zone maps, per-char tuning resolved by zone (V29). ⊥ stale tuning → physics mismatch vs server.
 - V10: predicted world reconciles to authoritative snap on each `EventSnapshot` — all predicted states ! converge to server snap @ acked tick (own error ≤ rounding; others ≤ extrapolation err). ⊥ permanent divergence.
 - V10a: reconcile jumps smoothed — rendered pos lerps prev-predicted → new-predicted over short window (DDNet antiping smooth, `gameclient.cpp:2271`). ⊥ visible teleport on correction.
 - V10b: prediction physics config per game-type — `WorldConfig`{PredictWeapons,PredictFreeze,PredictTiles,PredictDDRace,IsVanilla,IsDDRace} from GameInfoEx. vanilla ≠ DDRace sim. ⊥ DDRace freeze/tele predicted on vanilla server (& vice-versa).
@@ -197,22 +265,32 @@ smoothing: on reconcile lerp prev→new predicted over window. ⊥ teleport visi
 - V14: transient-obj events (explosion/death/spawn/hammerhit) fire once per snap they appear; ⊥ dedup across snaps (objs already one-tick). map snap obj → event in same `EventSnapshot` pass.
 - V15: whisper unified — ∀ source → identical `WhisperEvent{FromID,ToID,Msg}`. sources: 0.6 DDNet `Sv_Chat m_Team`∈{TEAM_WHISPER_SEND,TEAM_WHISPER_RECV} (≥2); 0.7 `Sv_Chat m_Mode==CHAT_WHISPER`. (vanilla 0.6 teeworlds: none — DDNet adds via m_Team.) consumer ⊥ see protocol diff.
 - V15a: 0.7 obj-as-message normalize — 0.7 `Sv_ClientInfo`/`Sv_ClientDrop`/`Sv_SkinChange`/`Sv_Team`/`Sv_GameInfo` carry data that in 0.6 lives in snap OBJECTS (ClientInfo/GameInfo). reader maps BOTH → same event (E_player_join/leave/skin_change/team_set/game_info). ref `sixup_translate_game.cpp`. test: join fires on 0.6 & 0.7.
-- V16: full event scope — ∀ §I.catalog rows (vanilla + DDNet-ext + snap-derived A/B/C/D) implemented. ⊥ silent skip; unimpl → explicit `?`-flagged + §T row.
+- V16: full event scope — ∀ §I.catalog rows (vanilla + DDNet-ext + snap-derived A/B/C/D/E) implemented. ⊥ silent skip; unimpl → explicit `?`-flagged + §T row.
 - V17: protocol-unified events (generalizes V15 to whole catalog). ONE event struct per logical event, defined once (`packet`). net6 & net7 readers both emit it. consumer/callback code ⊥ branch on `version`, ⊥ see net6/net7 types. event present in only 1 protocol → documented version-only in §I + `?`. snap-derived events identical (snap format shared post-decode). test: same handler fires on both 0.6 & 0.7 server for shared events.
+- V18: consumer interface protocol-unified (extends V17 to actions). `Action` set & `TickState` identical regardless of 0.6/0.7. `c.Do(Action)` maps to the active session's send. consumer/Frontend ⊥ branch on version, ⊥ see net6/net7 types.
+- V19: `TickState` self-contained & complete — ∀ data a consumer needs for one tick present: predicted local+all chars, projectiles, visible entities, MapView (collision env incl unhookable tile positions), tuning, game/race state, events-since-last-tick. ⊥ require consumer to call back for missing state. built from PREDICTED world (V9), not raw snap.
+- V20: ONE plug ∀ consumers — UI render, UI input, ML train-ingest, ML exec — implement same `Frontend` interface, plug identically (`WithFrontend`/`SetFrontend`) into headless `Client`. ⊥ separate API per use case. UI-input path == ML-action path == `c.Do(Action)`.
+- V21: smoothing IN-SCOPE (supersedes B3 deferral — render consumer now exists). keep prev+cur `PredictedWorld`; `TickState.IntraTick` + `SmoothedCharacters(intra)` lerp prev→cur per cid. render ⊥ teleport between ticks. headless-only consumers may ignore (intra=0 == V10/predicted).
+- V22: `Action` covers full ddnet + 0.7 client action set — movement/aim/jump/hook/fire/weapon, chat, team chat, whisper, emoticon, kill, vote, call-vote, set-team, spectate. each ! map to a net6 AND net7 send (or documented version-only + `?`). missing action → `?`-flag + §T row.
+- V24: dual cadence, single builder. driver supports `TickModeFixed` (50Hz, IntraTick=0, ML) & `TickModeFrame` (render rate, IntraTick∈[0,1), smoothed). BOTH go through ONE `buildTickState(tick)`; frame mode only overlays `SmoothedCharacters(intra)` + IntraTick on top. ⊥ duplicate/divergent TickState assembly per mode. Frontend.Mode() selects loop; everything else shared.
+- V25: ONE canonical type per concept — ⊥ redundant parallel structs/consts. character = `CharacterState` (snapshot AND predicted; ⊥ separate `PredictedCharacter` type). sim char = `physics.Core` (convert only at seed/extract). position: `physics.Vec2` (sim float) ↔ int X/Y (wire/snap) at ONE conversion site. input: `packet.PlayerInput` (wire/Action) ↔ `physics.Input` (sim) via single `inputToPhysics`. weapon ids: `packet.Weapon` is source; `physics` mirror = SOLE documented exception (layer isolation, ⊥ packet import), ⊥ any further dup. tuning: `physics.Tuning` canonical, `EventTuneParams.Raw` = wire form decoded once. new code ! reuse canonical, ⊥ reinvent.
+- V26: `MapView` spans the COMPLETE local map (downloaded/cached), ⊥ limited to snapshot-visible region. out-of-bounds tile query → `Solid` (world border, matches collision). `Window` crops a FIXED-size chunk at any center, OOB padded Solid.
+- V27: ML observation window FIXED-size ∀ ticks (constant ML input shape) — config W×H tiles (default square), ego-centric on predicted self, OOB padded Solid, multi-channel (static map planes + dynamic entity planes). ⊥ variable-size or visible-only crop. ⊥ rebuild map collision per tick (map static — query the one MapView).
+- V28: observation completeness — obs exposes EVERYTHING available for the tick: ALL static map layers (collision, freeze, death, tele, speedup, switch, tune-zone), ALL dynamic entities (self, players, projectiles, lasers, pickups, flags, doors/ext), AND agent scalars (current weapon, health/armor/ammo, velocity, hook, active tuning vector, tune-zone, race/game state). ⊥ silently omit an available entity/layer. unavailable item → documented `?`, not dropped.
+- V29: position-dependent tuning — tuning may differ per DDNet tune-zone. `MapView.TuneZone(tx,ty)` from map Tune layer; `Client.TuningAt(tx,ty)`/`ActiveTuning` resolve it. default tuning ← `Sv_TuneParams` (zone 0). per-zone tuning VALUES ⊥ reliably on wire (server-side `tune_zone` config) — `?`; model still observes the zone INDEX + resulting trajectory, so it can learn zone behavior. prediction uses zone tuning when known, else default; ⊥ assume single global tuning on DDRace maps with tune zones.
+- V30: per-tile tuning in observation — obs window includes ONE plane per tuning param, each cell = `TuningAt(tile)` (the tile's zone tuning), so the model sees the physics every tile imposes and can predict movement on tiles it will consume. piecewise-constant per zone. unknown per-zone values → default(zone-0) fallback; the tune-zone-index plane (V28) still separates zones. ⊥ expose only self-tile tuning when full-window per-tile tuning is the observation goal.
 
 ## §T — tasks
 
 ```
 id|status|task|cites
-T0|x|migrate NewCollision(twmap.Map)→physics.Collision out of replay into physics/ (or client/)|V8,I.removal
-T1|x|remove all replay: del replay/ cmd/replay/ docs/GHOST_REPLAY_*; KEEP physics/; go build+test ./... green|V6,V8,I.removal
 T2|x|research ddnet server events → §I event catalog finalized (this doc); whisper resolved V15|I.catalog
 T3|x|define event structs (ChatEvent…WeaponChangeEvent) impl packet.Event|V1,V4,I.catalog
 T4|x|parse msg-derived events in net6/reader.go processPayload switch + net7 equiv → SendEvent|V1,V4,V15,C5
 T4a|x|DDNet-ext msg (NETMSGTYPE_EX UUID) decode: teamsstate, killmsgteam, yourvote, racefinish, record, commandinfo(+group), votegroup, changeinfocooldown, myownmsg, mapsoundglobal → events|V4,V16,I.catalog
 T4d|x|0.7 obj-as-msg unify: Sv_ClientInfo/ClientDrop/SkinChange/Team/GameInfo/GameMsg/ServerSettings → E_player_join/leave/skin_change/team_set/game_info/game_msg/server_settings; map to 0.6 snap-obj source|V15a,V17,I.catalog
 T4e|x|DamageInd net-event (vanilla obj 20) → EventDamageInd in deriveTransient|V14,I.catalog
-T4e2|x|UUID-ext snap-obj decode: DDNetCharacter(freeze/flags/jumps), DDNetPlayer(auth/afk), SpecChar, Finish — BLOCKED on snapshot EX-type decode infra (B1)|V14,I.catalog
+T4e2|x|UUID-ext snap-obj decode: DDNetCharacter(freeze/flags/jumps), DDNetPlayer(auth/afk), SpecChar, Finish via deriveExt (B1 resolved — no decoder change)|V14,I.catalog
 T4b|x|chat/whisper unify: 0.6(team,cid,msg) & 0.7(mode,cid,targetID,msg) → E_chat/E_servermsg/E_whisper by mode|V15,V17,I.catalog
 T4c|x|sys-msg events: rcon_line, rcon_auth, rcon_cmd_list, server_error (net6/reader.go sys switch)|V1,I.catalog
 T5|x|SnapStorage: track map[cid]CharacterState all players + prev-snap copy (extend client/snap.go)|V12,C5
@@ -227,10 +305,20 @@ T9|x|PredictedWorld: two-world (GameWorld snap-seed + PredictedWorld copy→Tick
 T9a|x|antiping others: extrapolate non-local chars (reuse last intent, Core.Tick); PredictedCharacters() map|V9a,I.predict
 T9b|x|projectile prediction via physics.Tuning.ProjectilePos + PredictedProjectiles() (laser is hitscan, no ballistic predict). B2 resolved|V9,I.predict
 T10|x|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
-T10a|-|reconcile smoothing — DEFERRED (B3): render-only, no consumer in headless client|V10a,V11,I.predict
+T10a|.|reconcile smoothing — RE-SCOPED (B3 reverted, V21): keep prev+cur PredictedWorld, SmoothedCharacters(intraTick) lerp for render|V10a,V11,V21,I.predict
 T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
+T12|.|unified Action type (input/chat/whisper/emoticon/kill/vote/callvote/setteam/spectate) + c.Do(Action) → net6 & net7 send|V18,V22,I.consumer
+T13|.|TickState observation struct: predicted local+all chars, projectiles, lasers/pickups/flags, tuning, game/race, events-since-tick|V19,I.consumer
+T14|.|MapView: WHOLE-map queries — ALL layers (Solid/Unhook/HookThrough/Death/Freeze/Tele/Speedup/Switch) + TuneZone(tx,ty), OOB→Solid + Window crop, from twmap LayerKind{Game,Front,Tele,Speedup,Switch,Tune}|V19,V26,V28,I.mapview
+T15|.|Frontend interface {Mode()TickMode; OnTick(*Client,TickState)[]Action} + WithFrontend/SetFrontend; same plug UI/ML-train/ML-exec|V18,V20,V24,I.consumer
+T16|.|tick driver: ONE buildTickState(tick); TickModeFixed loop per predicted tick + TickModeFrame loop (IntraTick+SmoothedCharacters overlay); call OnTick, apply []Action via c.Do|V19,V20,V21,V24,I.consumer
+T17|.|tests: Action↔send both protocols; TickState complete; both cadences share builder; one Frontend serves UI+ML plugs; MapView tiles + Window crop correct|V18,V19,V20,V22,V24
+T19|x|consolidate redundant types: canonical CharacterState/Vec2/PlayerInput/Weapon/Tuning + single conversion sites; audit & remove dup impls; ⊥ phantom PredictedCharacter|V25
+T20|.|ML observation: ego-centric FIXED multi-channel window — ALL static planes (collision+freeze+death+tele+speedup+switch+tune-zone) + per-tile tuning planes (TuningAt per cell) + ALL dynamic entity planes + agent scalars (weapon/hp/vel/hook/active-tuning/tune-zone); config size, square default, OOB=Solid|V26,V27,V28,V30,I.mapview,I.consumer
+T21|.|position-dependent tuning: per-tune-zone tuning store; Client.TuningAt(tx,ty) over any tile/window; ActiveTuning; default←Sv_TuneParams; feed predicted world per char's zone; expose in TickState|V29,V30,V9b,I.consumer
 ```
-order: T0 → T1 → T2 → T3 → T5 → ((T4 → T4a → T4b → T4c → T4d → T4e) ∥ (T5a → T5b → T5c → T5d)) → T6 → (T8 → T9 → T9a → T9b → T10 → T10a) → T7,T11.
+order: done = T2–T10, T11. active: T19 (consolidate) + T10a (smoothing) + T12–T17, T20, T21.
+build order: T19 (consolidate first) → T14 (mapview+layers+window) → T21 (position tuning) → T13 (tickstate) → T12 (actions) → T10a (smoothing) → T15 (frontend) → T16 (driver) → T20 (ML obs) → T17 (tests).
 
 ## §R — research refs (verified sources)
 
@@ -245,5 +333,5 @@ catalog + prediction verified against pulled sources:
 id|date|cause|fix
 B1|2026-06-13|T4e assumed ext snap-objects need new decoder infra; feared blocked. premise WRONG: applyDelta already passes ext items through raw.|RESOLVED in T4e2: marker (type-0, id≥0x4000) carries UUID; ext obj uses type≥0x4000. deriveExt in client/snap.go maps marker UUID→type & decodes DDNetCharacter/Player/SpecChar/Finish. NO decoder change. T4e=DamageInd (vanilla) still valid split.
 B2|2026-06-13|T9b needs per-weapon curvature+speed (gun/shotgun); physics.Tuning only had grenade.|RESOLVED: added GunSpeed/Curvature(2200/1.25), ShotgunSpeed/Curvature(2750/1.25) to physics.Tuning (DDNet tuning.h) + Tuning.ProjectilePos (CalcPos formula). PredictedProjectiles() advances snapshot projectiles to predTick. laser = hitscan, no ballistic predict needed.
-B3|2026-06-13|T10a reconcile smoothing (lerp prev→cur predicted rendered pos) is render-only; headless client has no renderer to consume lerped pos. building it = dead code.|defer T10a as out-of-scope for headless; revisit if a render/replay consumer is added. prediction itself (T9/T9a/T10) already reconciles to authoritative state each snap.
+B3|2026-06-13|T10a reconcile smoothing was render-only; headless client had no renderer → deferred as dead code.|REVERTED 2026-06-13: render/UI consumer + ML consumer now in scope (V21, T15 Frontend). smoothing needed for sub-tick render interpolation. T10a back to `.` (active). "revisit if render consumer added" condition now met.
 ```
