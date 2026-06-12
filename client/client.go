@@ -81,6 +81,10 @@ type Client struct {
 	// server-event callbacks — registered via On/OnXxx, dispatched from the
 	// event loop after snap state is updated and mu released (V2, V3)
 	callbacks callbackRegistry
+
+	// prediction input history — sent local inputs keyed by predicted tick,
+	// re-applied during prediction re-simulation (V9)
+	predInputs predInputBuffer
 }
 
 // Option configures a Client at construction time.
@@ -305,6 +309,7 @@ func (c *Client) SendInput(input packet.PlayerInput) error {
 		return nil
 	}
 
+	c.predInputs.record(predTick, input)
 	data := packInput(&input)
 	return c.sess.SendInput(ackTick, predTick, inputSize, data)
 }
@@ -321,6 +326,7 @@ func (c *Client) SendInputForTick(predTick int, input packet.PlayerInput) error 
 	if ackTick <= 0 || predTick <= 0 {
 		return nil
 	}
+	c.predInputs.record(predTick, input)
 	data := packInput(&input)
 	return c.sess.SendInput(ackTick, predTick, inputSize, data)
 }
