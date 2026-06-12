@@ -207,7 +207,7 @@ id|status|task|cites
 T0|x|migrate NewCollision(twmap.Map)→physics.Collision out of replay into physics/ (or client/)|V8,I.removal
 T1|x|remove all replay: del replay/ cmd/replay/ docs/GHOST_REPLAY_*; KEEP physics/; go build+test ./... green|V6,V8,I.removal
 T2|x|research ddnet server events → §I event catalog finalized (this doc); whisper resolved V15|I.catalog
-T3|.|define event structs (ChatEvent…WeaponChangeEvent) impl packet.Event|V1,V4,I.catalog
+T3|x|define event structs (ChatEvent…WeaponChangeEvent) impl packet.Event|V1,V4,I.catalog
 T4|.|parse msg-derived events in net6/reader.go processPayload switch + net7 equiv → SendEvent|V1,V4,V15,C5
 T4a|.|DDNet-ext msg (NETMSGTYPE_EX UUID) decode: teamsstate, killmsgteam, yourvote, racefinish, record, commandinfo(+group), votegroup, changeinfocooldown, myownmsg, mapsoundglobal → events|V4,V16,I.catalog
 T4d|.|0.7 obj-as-msg unify: Sv_ClientInfo/ClientDrop/SkinChange/Team/GameInfo/GameMsg/ServerSettings → E_player_join/leave/skin_change/team_set/game_info/game_msg/server_settings; map to 0.6 snap-obj source|V15a,V17,I.catalog
