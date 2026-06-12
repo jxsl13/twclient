@@ -119,6 +119,8 @@ type SnapStorage struct {
 	// newly appearing projectile/laser can be reported as "fired" (V14).
 	prevProjectiles map[int]struct{}
 	prevLasers      map[int]struct{}
+	// projectiles holds the latest snapshot's projectile data for prediction.
+	projectiles map[int]packet.ProjectileState
 	gameInfo        GameInfoState
 	raceTime        RaceTime
 
@@ -507,6 +509,7 @@ func (ss *SnapStorage) deriveTransient() []packet.Event {
 
 	curProj := make(map[int]struct{})
 	curLaser := make(map[int]struct{})
+	projData := make(map[int]packet.ProjectileState)
 
 	for _, it := range ss.lastSnap.Items {
 		f := it.Fields
@@ -537,11 +540,17 @@ func (ss *SnapStorage) deriveTransient() []packet.Event {
 			}
 		case net6.ObjProjectile:
 			curProj[it.ID] = struct{}{}
-			if _, seen := ss.prevProjectiles[it.ID]; !seen && len(f) >= net6.SizeProjectile {
-				evs = append(evs, packet.EventProjectileFired{
-					X: f[0], Y: f[1], VelX: f[2], VelY: f[3],
-					Type: packet.Weapon(f[4]), Owner: -1,
-				})
+			if len(f) >= net6.SizeProjectile {
+				projData[it.ID] = packet.ProjectileState{
+					ID: it.ID, X: f[0], Y: f[1], VelX: f[2], VelY: f[3],
+					Type: packet.Weapon(f[4]), StartTick: f[5],
+				}
+				if _, seen := ss.prevProjectiles[it.ID]; !seen {
+					evs = append(evs, packet.EventProjectileFired{
+						X: f[0], Y: f[1], VelX: f[2], VelY: f[3],
+						Type: packet.Weapon(f[4]), Owner: -1,
+					})
+				}
 			}
 		case net6.ObjLaser:
 			curLaser[it.ID] = struct{}{}
@@ -555,6 +564,7 @@ func (ss *SnapStorage) deriveTransient() []packet.Event {
 
 	ss.prevProjectiles = curProj
 	ss.prevLasers = curLaser
+	ss.projectiles = projData
 	return evs
 }
 

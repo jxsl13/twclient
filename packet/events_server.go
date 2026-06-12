@@ -469,6 +469,19 @@ type EventProjectileFired struct {
 
 func (EventProjectileFired) eventTag() {}
 
+// ProjectileState is a projectile's state. When returned from
+// PredictedProjectiles, X and Y are the predicted positions at the predicted
+// tick; VelX/VelY are the launch direction (×100, as on the wire).
+type ProjectileState struct {
+	ID        int
+	X         int
+	Y         int
+	VelX      int
+	VelY      int
+	Type      Weapon
+	StartTick int
+}
+
 // EventLaserFired fires when a new laser appears (someone shot).
 type EventLaserFired struct {
 	FromX int

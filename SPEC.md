@@ -225,7 +225,7 @@ T7|x|tests: registry concurrency, each event fires, unregister idempotent; cross
 T8|x|input ring buffer keyed by tick (extend inputRecord); capture local clientID from snap|V9,I.predict
 T9|x|PredictedWorld: two-world (GameWorld snap-seed + PredictedWorld copy→Tick to predTick); own re-sim inputs; Tuning+WorldConfig from game-type|V9,V9b,V10b,V11,I.predict
 T9a|x|antiping others: extrapolate non-local chars (reuse last intent, Core.Tick); PredictedCharacters() map|V9a,I.predict
-T9b|-|projectile/laser prediction — DEFERRED (B2): needs per-weapon tuning in physics.Tuning|V9,I.predict
+T9b|x|projectile prediction via physics.Tuning.ProjectilePos + PredictedProjectiles() (laser is hitscan, no ballistic predict). B2 resolved|V9,I.predict
 T10|x|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
 T10a|-|reconcile smoothing — DEFERRED (B3): render-only, no consumer in headless client|V10a,V11,I.predict
 T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
@@ -244,6 +244,6 @@ catalog + prediction verified against pulled sources:
 ```
 id|date|cause|fix
 B1|2026-06-13|T4e assumed ext snap-objects need new decoder infra; feared blocked. premise WRONG: applyDelta already passes ext items through raw.|RESOLVED in T4e2: marker (type-0, id≥0x4000) carries UUID; ext obj uses type≥0x4000. deriveExt in client/snap.go maps marker UUID→type & decodes DDNetCharacter/Player/SpecChar/Finish. NO decoder change. T4e=DamageInd (vanilla) still valid split.
-B2|2026-06-13|T9b "CProjectile sim" needs per-weapon-type curvature+speed (gun/shotgun) to scale projectile motion. physics.Tuning only models grenade (built for replay rocket-jump). linear scaling others = wrong positions, misleading for bot.|defer T9b until physics.Tuning extended w/ GunSpeed/Curvature, ShotgunSpeed/Curvature (DDNet tuning.h). grenade-only predict insufficient for full antiping.
+B2|2026-06-13|T9b needs per-weapon curvature+speed (gun/shotgun); physics.Tuning only had grenade.|RESOLVED: added GunSpeed/Curvature(2200/1.25), ShotgunSpeed/Curvature(2750/1.25) to physics.Tuning (DDNet tuning.h) + Tuning.ProjectilePos (CalcPos formula). PredictedProjectiles() advances snapshot projectiles to predTick. laser = hitscan, no ballistic predict needed.
 B3|2026-06-13|T10a reconcile smoothing (lerp prev→cur predicted rendered pos) is render-only; headless client has no renderer to consume lerped pos. building it = dead code.|defer T10a as out-of-scope for headless; revisit if a render/replay consumer is added. prediction itself (T9/T9a/T10) already reconciles to authoritative state each snap.
 ```

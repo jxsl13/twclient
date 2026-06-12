@@ -208,6 +208,44 @@ func (c *Client) PredictedCharacters() map[int]CharacterState {
 	return base
 }
 
+// PredictedProjectiles returns every projectile from the latest snapshot with
+// its position advanced to the predicted tick using the ballistic model
+// (V9, B2). With prediction disabled the positions are the snapshot's current
+// positions (advanced to the latest received tick).
+func (c *Client) PredictedProjectiles() []packet.ProjectileState {
+	c.mu.RLock()
+	tun := c.predTun
+	enabled := c.predictEnabled
+	lastTick := c.snap.lastTick
+	projs := make([]packet.ProjectileState, 0, len(c.snap.projectiles))
+	for _, p := range c.snap.projectiles {
+		projs = append(projs, p)
+	}
+	c.mu.RUnlock()
+
+	targetTick := lastTick
+	if enabled {
+		if pt := c.predTime.PredTick(); pt > 0 {
+			targetTick = pt
+		}
+	}
+
+	out := make([]packet.ProjectileState, 0, len(projs))
+	for _, p := range projs {
+		t := float32(targetTick-p.StartTick) / physics.TickSpeed
+		if t < 0 {
+			t = 0
+		}
+		dir := physics.Vec2{X: float32(p.VelX) / 100, Y: float32(p.VelY) / 100}
+		pos := tun.ProjectilePos(physics.Vec2{X: float32(p.X), Y: float32(p.Y)}, dir, int(p.Type), t)
+		pp := p
+		pp.X = int(pos.X)
+		pp.Y = int(pos.Y)
+		out = append(out, pp)
+	}
+	return out
+}
+
 // inputToPhysics converts a network player input into the physics tick input.
 // FireGrenade is set when the fire counter is in the pressed state (odd) while
 // the grenade is the wanted weapon, matching the server's rocket-jump impulse.

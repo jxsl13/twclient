@@ -7,6 +7,28 @@ import (
 	"github.com/jxsl13/twclient/physics"
 )
 
+// B2/V9: PredictedProjectiles advances projectiles ballistically to the target
+// tick. With prediction disabled it advances to the latest snapshot tick.
+func TestPredictedProjectiles(t *testing.T) {
+	c := &Client{predTun: physics.DefaultTuning()}
+	c.snap.lastTick = 100
+	c.snap.projectiles = map[int]packet.ProjectileState{
+		1: {ID: 1, X: 0, Y: 0, VelX: 100, VelY: 0, Type: packet.WeaponGun, StartTick: 50},
+	}
+
+	got := c.PredictedProjectiles()
+	if len(got) != 1 {
+		t.Fatalf("want 1 projectile, got %d", len(got))
+	}
+	// t = (100-50)/50 = 1s, dir = (1,0): x = 2200, y = 1.25/10000*2200^2.
+	if got[0].X != 2200 {
+		t.Errorf("projectile X: want 2200, got %d", got[0].X)
+	}
+	if got[0].Y <= 0 {
+		t.Errorf("projectile Y should be bent down by gravity, got %d", got[0].Y)
+	}
+}
+
 // V11: with prediction disabled, predicted accessors equal raw snapshot state.
 func TestPredictionDisabledEqualsRaw(t *testing.T) {
 	c := &Client{}
