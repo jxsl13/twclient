@@ -220,14 +220,14 @@ T5b|x|snap-derived motion: player move(throttled)/jump/dir/attack/weapon/hook/em
 T5c|x|transient-obj events: explosion/spawn/death/hammerhit/sound + projectile/laser (new-obj detect)|V14,I.catalog
 T5d|x|game/flag/round events: round-state, score, flag, spectarget|V16,I.catalog
 T6|x|callback registry on Client: On[E] generic + OnX wrappers, unregister, mutex, dispatch in handleEvent|V2,V3,V7,I.api
-T7|.|tests: registry concurrency, each event fires, unregister idempotent; cross-protocol — same event/handler fires on 0.6 & 0.7|V2,V3,V7,V17
+T7|x|tests: registry concurrency, each event fires, unregister idempotent; cross-protocol — same event/handler fires on 0.6 & 0.7|V2,V3,V7,V17
 T8|x|input ring buffer keyed by tick (extend inputRecord); capture local clientID from snap|V9,I.predict
 T9|x|PredictedWorld: two-world (GameWorld snap-seed + PredictedWorld copy→Tick to predTick); own re-sim inputs; Tuning+WorldConfig from game-type|V9,V9b,V10b,V11,I.predict
 T9a|x|antiping others: extrapolate non-local chars (reuse last intent, Core.Tick); PredictedCharacters() map|V9a,I.predict
 T9b|.|projectile/laser prediction (CProjectile sim) → PredictedProjectiles()|V9,I.predict
 T10|x|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
 T10a|.|reconcile smoothing: lerp rendered pos prev→new predicted over window; WithAntiping Option|V10a,V11,I.predict
-T11|.|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
+T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
 ```
 order: T0 → T1 → T2 → T3 → T5 → ((T4 → T4a → T4b → T4c → T4d → T4e) ∥ (T5a → T5b → T5c → T5d)) → T6 → (T8 → T9 → T9a → T9b → T10 → T10a) → T7,T11.
 
