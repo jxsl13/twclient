@@ -130,6 +130,84 @@ func (w *PredictedWorld) character(cid int) (CharacterState, bool) {
 	}, true
 }
 
+// reconcilePrediction rebuilds the predicted world from the latest acked
+// snapshot and re-simulates forward to the predicted tick (V10). It mirrors
+// DDNet copying the snapshot world into the predicted world each frame: the
+// prediction always starts from authoritative state, so errors never
+// accumulate across snapshots (V9).
+func (c *Client) reconcilePrediction() {
+	if !c.predictEnabled {
+		return
+	}
+
+	// Build the map collision lazily once the map is available.
+	if c.predCol == nil {
+		if m := c.Map(); m != nil {
+			col := physics.NewCollision(m)
+			c.mu.Lock()
+			c.predCol = col
+			c.mu.Unlock()
+		}
+	}
+
+	predTick := c.predTime.PredTick()
+
+	c.mu.Lock()
+	col := c.predCol
+	tun := c.predTun
+	chars := c.snap.charactersCopy()
+	base := c.snap.lastTick
+	local := c.snap.localCID
+	antiping := c.antiping
+	c.mu.Unlock()
+
+	if col == nil || predTick <= 0 {
+		return
+	}
+
+	w := newPredictedWorld(col, tun, base, chars)
+	w.advanceOwn(local, predTick, &c.predInputs)
+	if antiping {
+		w.advanceOthers(local, predTick)
+	}
+
+	c.mu.Lock()
+	c.predWorld = w
+	c.mu.Unlock()
+}
+
+// PredictedCharacter returns the predicted local character state. With
+// prediction disabled it equals Character() (V11).
+func (c *Client) PredictedCharacter() CharacterState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.predictEnabled && c.predWorld != nil {
+		if st, ok := c.predWorld.character(c.snap.localCID); ok {
+			return st
+		}
+	}
+	return c.snap.character
+}
+
+// PredictedCharacters returns the predicted state of every visible character.
+// With antiping enabled all characters are predicted; with only base
+// prediction enabled, the local character is predicted and others are raw;
+// with prediction disabled all are raw snapshot state (V11).
+func (c *Client) PredictedCharacters() map[int]CharacterState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	base := c.snap.charactersCopy()
+	if c.predictEnabled && c.predWorld != nil {
+		if c.antiping {
+			return c.predWorld.characters()
+		}
+		if st, ok := c.predWorld.character(c.snap.localCID); ok {
+			base[c.snap.localCID] = st
+		}
+	}
+	return base
+}
+
 // inputToPhysics converts a network player input into the physics tick input.
 // FireGrenade is set when the fire counter is in the pressed state (odd) while
 // the grenade is the wanted weapon, matching the server's rocket-jump impulse.

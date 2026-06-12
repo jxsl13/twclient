@@ -7,6 +7,51 @@ import (
 	"github.com/jxsl13/twclient/physics"
 )
 
+// V11: with prediction disabled, predicted accessors equal raw snapshot state.
+func TestPredictionDisabledEqualsRaw(t *testing.T) {
+	c := &Client{}
+	c.snap.localCID = 1
+	c.snap.character = CharacterState{X: 42, Y: 7}
+	c.snap.characters = map[int]CharacterState{1: {X: 42, Y: 7}, 2: {X: 99}}
+
+	if got := c.PredictedCharacter(); got != c.Character() {
+		t.Errorf("disabled PredictedCharacter should equal Character: %#v vs %#v", got, c.Character())
+	}
+	pc := c.PredictedCharacters()
+	if pc[1].X != 42 || pc[2].X != 99 {
+		t.Errorf("disabled PredictedCharacters should be raw: %#v", pc)
+	}
+}
+
+// V10/V11: with prediction enabled the local accessor returns the predicted
+// world's state; others stay raw unless antiping is on.
+func TestPredictionAccessorsEnabled(t *testing.T) {
+	c := &Client{predictEnabled: true}
+	c.snap.localCID = 1
+	c.snap.character = CharacterState{X: 100}
+	c.snap.characters = map[int]CharacterState{1: {X: 100}, 2: {X: 200}}
+
+	// Inject a predicted world with a moved local character.
+	col := openCollision()
+	c.predWorld = newPredictedWorld(col, physics.DefaultTuning(), 0,
+		map[int]CharacterState{1: {X: 150}, 2: {X: 250}})
+
+	if got := c.PredictedCharacter(); got.X != 150 {
+		t.Errorf("enabled PredictedCharacter X: want 150, got %d", got.X)
+	}
+	// Antiping off: others remain raw.
+	pc := c.PredictedCharacters()
+	if pc[1].X != 150 || pc[2].X != 200 {
+		t.Errorf("antiping off: local predicted, others raw; got %#v", pc)
+	}
+	// Antiping on: others predicted too.
+	c.antiping = true
+	pc = c.PredictedCharacters()
+	if pc[2].X != 250 {
+		t.Errorf("antiping on: others predicted; got %#v", pc)
+	}
+}
+
 // openCollision is empty space (nothing solid), for deterministic motion tests.
 func openCollision() *physics.Collision {
 	return &physics.Collision{Solid: func(int, int) bool { return false }}

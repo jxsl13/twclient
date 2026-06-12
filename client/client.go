@@ -19,6 +19,7 @@ import (
 	"github.com/jxsl13/twclient/net6"
 	"github.com/jxsl13/twclient/net7"
 	"github.com/jxsl13/twclient/packet"
+	"github.com/jxsl13/twclient/physics"
 	"github.com/jxsl13/twmap"
 )
 
@@ -90,6 +91,8 @@ type Client struct {
 	predictEnabled bool
 	antiping       bool
 	predWorld      *PredictedWorld
+	predCol        *physics.Collision
+	predTun        physics.Tuning
 }
 
 // Option configures a Client at construction time.
@@ -159,6 +162,7 @@ func New(address string, opts ...Option) *Client {
 		version:  packet.Version06,
 		mapCache: packet.NewMapCache(),
 		log:      slog.New(slog.DiscardHandler),
+		predTun:  physics.DefaultTuning(),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -423,6 +427,7 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.mu.Unlock()
 		if e.Snap != nil {
 			c.predTime.OnSnapshot(e.Snap.Tick)
+			c.reconcilePrediction()
 		}
 		// Dispatch snap-derived events after releasing mu (V2).
 		for _, dev := range derived {

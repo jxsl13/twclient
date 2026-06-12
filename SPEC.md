@@ -225,7 +225,7 @@ T8|x|input ring buffer keyed by tick (extend inputRecord); capture local clientI
 T9|x|PredictedWorld: two-world (GameWorld snap-seed + PredictedWorld copy→Tick to predTick); own re-sim inputs; Tuning+WorldConfig from game-type|V9,V9b,V10b,V11,I.predict
 T9a|x|antiping others: extrapolate non-local chars (reuse last intent, Core.Tick); PredictedCharacters() map|V9a,I.predict
 T9b|.|projectile/laser prediction (CProjectile sim) → PredictedProjectiles()|V9,I.predict
-T10|.|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
+T10|x|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
 T10a|.|reconcile smoothing: lerp rendered pos prev→new predicted over window; WithAntiping Option|V10a,V11,I.predict
 T11|.|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
 ```
