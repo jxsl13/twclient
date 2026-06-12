@@ -1,0 +1,208 @@
+package net6
+
+import (
+	"github.com/jxsl13/twclient/packer"
+	"github.com/jxsl13/twclient/packet"
+)
+
+// This file decodes vanilla/DDNet 0.6 server game messages into the unified
+// packet events (V1, V17). Field layouts follow DDNet datasrc/network.py.
+
+func (s *Session) emit(ev packet.Event) {
+	packet.SendEvent(s.reader.eventCh, ev)
+}
+
+// processChat decodes Sv_Chat and splits it into chat / server-message /
+// whisper events by m_Team and m_ClientId (V15).
+func (s *Session) processChat(data []byte) {
+	u := packer.NewUnpacker(data)
+	team, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	cid, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	msg, err := u.GetString()
+	if err != nil {
+		return
+	}
+
+	switch {
+	case team == TeamWhisperRecv:
+		s.emit(packet.EventWhisper{FromID: cid, ToID: -1, Msg: msg})
+	case team == TeamWhisperSend:
+		s.emit(packet.EventWhisper{FromID: -1, ToID: cid, Msg: msg})
+	case cid == -1:
+		s.emit(packet.EventServerMsg{Msg: msg})
+	default:
+		s.emit(packet.EventChat{Team: team, ClientID: cid, Msg: msg})
+	}
+}
+
+func (s *Session) processBroadcast(data []byte) {
+	u := packer.NewUnpacker(data)
+	text, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventBroadcast{Text: text})
+}
+
+func (s *Session) processMotd(data []byte) {
+	u := packer.NewUnpacker(data)
+	text, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventMotd{Text: text})
+}
+
+func (s *Session) processKillMsg(data []byte) {
+	u := packer.NewUnpacker(data)
+	killer, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	victim, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	weapon, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	modeSpecial, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventKill{
+		Killer:      killer,
+		Victim:      victim,
+		Weapon:      packet.Weapon(weapon),
+		ModeSpecial: modeSpecial,
+	})
+}
+
+func (s *Session) processSoundGlobal(data []byte) {
+	u := packer.NewUnpacker(data)
+	soundID, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventSoundGlobal{SoundID: soundID})
+}
+
+// processTuneParams reads all tuning values until the buffer is exhausted.
+func (s *Session) processTuneParams(data []byte) {
+	u := packer.NewUnpacker(data)
+	var raw []int32
+	for {
+		v, err := u.GetInt()
+		if err != nil {
+			break
+		}
+		raw = append(raw, int32(v))
+	}
+	s.emit(packet.EventTuneParams{Raw: raw})
+}
+
+func (s *Session) processWeaponPickup(data []byte) {
+	u := packer.NewUnpacker(data)
+	weapon, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventWeaponPickup{Weapon: packet.Weapon(weapon)})
+}
+
+func (s *Session) processEmoticon(data []byte) {
+	u := packer.NewUnpacker(data)
+	cid, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	emoticon, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventEmoticon{ClientID: cid, Emoticon: packet.Emoticon(emoticon)})
+}
+
+func (s *Session) processVoteSet(data []byte) {
+	u := packer.NewUnpacker(data)
+	timeout, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	desc, err := u.GetString()
+	if err != nil {
+		return
+	}
+	reason, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventVoteSet{Timeout: timeout, Desc: desc, Reason: reason})
+}
+
+func (s *Session) processVoteStatus(data []byte) {
+	u := packer.NewUnpacker(data)
+	yes, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	no, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	pass, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	total, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventVoteStatus{Yes: yes, No: no, Pass: pass, Total: total})
+}
+
+func (s *Session) processVoteOptionAdd(data []byte) {
+	u := packer.NewUnpacker(data)
+	desc, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventVoteOption{Op: packet.VoteOptionAdd, Desc: desc})
+}
+
+func (s *Session) processVoteOptionRemove(data []byte) {
+	u := packer.NewUnpacker(data)
+	desc, err := u.GetString()
+	if err != nil {
+		return
+	}
+	s.emit(packet.EventVoteOption{Op: packet.VoteOptionRemove, Desc: desc})
+}
+
+func (s *Session) processVoteClearOptions() {
+	s.emit(packet.EventVoteOption{Op: packet.VoteOptionClear})
+}
+
+// processVoteOptionListAdd decodes a batch of vote options, emitting one add
+// event per description.
+func (s *Session) processVoteOptionListAdd(data []byte) {
+	u := packer.NewUnpacker(data)
+	n, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	for range n {
+		desc, err := u.GetString()
+		if err != nil {
+			return
+		}
+		s.emit(packet.EventVoteOption{Op: packet.VoteOptionAdd, Desc: desc})
+	}
+}

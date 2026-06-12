@@ -97,6 +97,13 @@ const (
 	MsgGameSvRecordLegacy     = 27
 )
 
+// Sv_Chat m_Team values. DDNet uses Enum("TEAM", ..., -2): ALL=-2,
+// SPECTATORS=-1, RED=0, BLUE=1, WHISPER_SEND=2, WHISPER_RECV=3.
+const (
+	TeamWhisperSend = 2
+	TeamWhisperRecv = 3
+)
+
 // Snap object type IDs (0.6).
 const (
 	ObjPlayerInput     = 1

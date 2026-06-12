@@ -179,6 +179,34 @@ func (s *Session) processPayload(payload []byte) {
 			}
 		} else {
 			switch msgID {
+			case MsgGameSvChat:
+				s.processChat(msgData)
+			case MsgGameSvBroadcast:
+				s.processBroadcast(msgData)
+			case MsgGameSvMotd:
+				s.processMotd(msgData)
+			case MsgGameSvKillMsg:
+				s.processKillMsg(msgData)
+			case MsgGameSvSoundGlobal:
+				s.processSoundGlobal(msgData)
+			case MsgGameSvTuneParams:
+				s.processTuneParams(msgData)
+			case MsgGameSvWeaponPickup:
+				s.processWeaponPickup(msgData)
+			case MsgGameSvEmoticon:
+				s.processEmoticon(msgData)
+			case MsgGameSvVoteSet:
+				s.processVoteSet(msgData)
+			case MsgGameSvVoteStatus:
+				s.processVoteStatus(msgData)
+			case MsgGameSvVoteOptionAdd:
+				s.processVoteOptionAdd(msgData)
+			case MsgGameSvVoteOptionRemove:
+				s.processVoteOptionRemove(msgData)
+			case MsgGameSvVoteOptionListAdd:
+				s.processVoteOptionListAdd(msgData)
+			case MsgGameSvVoteClearOptions:
+				s.processVoteClearOptions()
 			case MsgGameSvDDRaceTimeLegacy:
 				s.processDDRaceTime(msgData)
 			case MsgGameSvRecordLegacy:
