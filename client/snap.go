@@ -105,8 +105,23 @@ type SnapStorage struct {
 	lastSnapTime time.Time
 	localCID     int
 	character    CharacterState
-	gameInfo     GameInfoState
-	raceTime     RaceTime
+	// characters holds every player's character state from the latest
+	// snapshot; prevCharacters holds the previous snapshot's map. Both are
+	// keyed by client ID. Snap-derived events diff these (V12).
+	characters     map[int]CharacterState
+	prevCharacters map[int]CharacterState
+	gameInfo       GameInfoState
+	raceTime       RaceTime
+}
+
+// charactersCopy returns a shallow copy of the latest per-client character
+// map. Caller must hold the Client mutex.
+func (ss *SnapStorage) charactersCopy() map[int]CharacterState {
+	out := make(map[int]CharacterState, len(ss.characters))
+	for id, c := range ss.characters {
+		out[id] = c
+	}
+	return out
 }
 
 func (ss *SnapStorage) raceTimeState() RaceTime {
@@ -157,10 +172,18 @@ func (ss *SnapStorage) updateFromSnap(snap *packet.Snapshot) {
 			ss.updateRaceTime(snap.Tick)
 		}
 	}
+	// Build the per-client character map for this snapshot, rotating the
+	// previous map into prevCharacters so snap-derived events can diff them.
+	newChars := make(map[int]CharacterState)
 	for _, item := range snap.Items {
-		if item.TypeID == net6.ObjCharacter && item.ID == ss.localCID {
-			ss.character = characterFromFields(item.Fields)
+		if item.TypeID == net6.ObjCharacter {
+			newChars[item.ID] = characterFromFields(item.Fields)
 		}
+	}
+	ss.prevCharacters = ss.characters
+	ss.characters = newChars
+	if local, ok := newChars[ss.localCID]; ok {
+		ss.character = local
 	}
 }
 
