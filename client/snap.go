@@ -1,9 +1,11 @@
 package client
 
 import (
+	"encoding/binary"
 	"time"
 
 	"github.com/jxsl13/twclient/net6"
+	"github.com/jxsl13/twclient/packer"
 	"github.com/jxsl13/twclient/packet"
 )
 
@@ -134,6 +136,51 @@ type SnapStorage struct {
 	// (the 0.7 reader emits these as messages instead, V15a).
 	prevClientIDs map[int]struct{}
 	rosterInit    bool
+
+	// previous DDNet ext-object state per client, for change-triggered events
+	// (T4e2). Keyed by client ID.
+	prevDDChar   map[int]ddCharState
+	prevDDPlayer map[int]ddPlayerState
+	prevSpecChar map[int][2]int // client -> {x,y}
+}
+
+// ddCharState/ddPlayerState capture the DDNet ext-object fields we diff.
+type ddCharState struct {
+	flags       int
+	freezeEnd   int
+	freezeStart int
+	jumps       int
+	jumpedTotal int
+}
+
+type ddPlayerState struct {
+	flags     int
+	authLevel int
+}
+
+// OFFSET_UUID_TYPE marks snapshot item types that are UUID-based ext objects;
+// a NETOBJTYPE_EX marker item (type 0, id >= this) carries the UUID.
+const offsetUUIDType = 0x4000
+
+// DDNet ext-object UUIDs.
+var (
+	uuidDDNetCharacter = packer.CalculateUUID("character@netobj.ddnet.tw")
+	uuidDDNetPlayer    = packer.CalculateUUID("player@netobj.ddnet.tw")
+	uuidSpecChar       = packer.CalculateUUID("spec-char@netobj.ddnet.tw")
+	uuidFinish         = packer.CalculateUUID("finish@netevent.ddnet.org")
+)
+
+// DDNetPlayer m_Flags bit (EXPLAYERFLAG order: AFK, PAUSED, SPEC).
+const exPlayerFlagAfk = 1 << 0
+
+// uuidFromFields reads a 16-byte UUID from the first four snapshot int fields
+// (big-endian uint32 per int, matching DDNet's CUuid packing).
+func uuidFromFields(f []int) [16]byte {
+	var u [16]byte
+	for i := 0; i < 4; i++ {
+		binary.BigEndian.PutUint32(u[i*4:], uint32(int32(f[i])))
+	}
+	return u
 }
 
 // charactersCopy returns a shallow copy of the latest per-client character
@@ -233,8 +280,130 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 
 	evs = append(evs, ss.deriveTransient()...)
 	evs = append(evs, ss.deriveGame()...)
+	evs = append(evs, ss.deriveExt()...)
 
 	return evs
+}
+
+// deriveExt resolves DDNet UUID-based snapshot ext objects and emits their
+// events (T4e2). Ext items arrive as raw SnapItems: NETOBJTYPE_EX marker items
+// (TypeID 0, ID >= offsetUUIDType) carry the UUID for an internal type id, and
+// the actual ext object items use that internal type id (>= offsetUUIDType).
+// These objects are DDNet-only; vanilla servers never send them.
+func (ss *SnapStorage) deriveExt() []packet.Event {
+	if ss.lastSnap == nil {
+		return nil
+	}
+
+	// Map internal ext type id -> UUID from the marker items.
+	markers := make(map[int][16]byte)
+	for _, it := range ss.lastSnap.Items {
+		if it.TypeID == 0 && it.ID >= offsetUUIDType && len(it.Fields) >= 4 {
+			markers[it.ID] = uuidFromFields(it.Fields)
+		}
+	}
+	if len(markers) == 0 {
+		return nil
+	}
+
+	var evs []packet.Event
+	for _, it := range ss.lastSnap.Items {
+		if it.TypeID < offsetUUIDType {
+			continue
+		}
+		uuid, ok := markers[it.TypeID]
+		if !ok {
+			continue
+		}
+		switch uuid {
+		case uuidDDNetCharacter:
+			evs = append(evs, ss.diffDDChar(it.ID, it.Fields)...)
+		case uuidDDNetPlayer:
+			evs = append(evs, ss.diffDDPlayer(it.ID, it.Fields)...)
+		case uuidSpecChar:
+			evs = append(evs, ss.diffSpecChar(it.ID, it.Fields)...)
+		case uuidFinish:
+			evs = append(evs, packet.EventFinish{ClientID: it.ID})
+		}
+	}
+	return evs
+}
+
+func (ss *SnapStorage) diffDDChar(cid int, f []int) []packet.Event {
+	if len(f) < 8 {
+		return nil
+	}
+	cur := ddCharState{
+		flags:       f[0],
+		freezeEnd:   f[1],
+		jumps:       f[2],
+		jumpedTotal: f[5],
+		freezeStart: f[7],
+	}
+	if ss.prevDDChar == nil {
+		ss.prevDDChar = make(map[int]ddCharState)
+	}
+	prev, had := ss.prevDDChar[cid]
+	ss.prevDDChar[cid] = cur
+	if !had {
+		return nil
+	}
+
+	var evs []packet.Event
+	if cur.freezeEnd != prev.freezeEnd || cur.freezeStart != prev.freezeStart {
+		evs = append(evs, packet.EventFreeze{
+			ClientID: cid,
+			Frozen:   cur.freezeEnd > ss.lastTick || cur.freezeEnd == -1,
+			EndTick:  cur.freezeEnd,
+		})
+	}
+	if cur.flags != prev.flags {
+		evs = append(evs, packet.EventPlayerFlags{ClientID: cid, Flags: cur.flags})
+	}
+	if cur.jumps != prev.jumps || cur.jumpedTotal != prev.jumpedTotal {
+		evs = append(evs, packet.EventJumpsChange{ClientID: cid, Jumps: cur.jumps, JumpedTotal: cur.jumpedTotal})
+	}
+	return evs
+}
+
+func (ss *SnapStorage) diffDDPlayer(cid int, f []int) []packet.Event {
+	if len(f) < 2 {
+		return nil
+	}
+	cur := ddPlayerState{flags: f[0], authLevel: f[1]}
+	if ss.prevDDPlayer == nil {
+		ss.prevDDPlayer = make(map[int]ddPlayerState)
+	}
+	prev, had := ss.prevDDPlayer[cid]
+	ss.prevDDPlayer[cid] = cur
+	if !had {
+		return nil
+	}
+
+	var evs []packet.Event
+	if cur.authLevel != prev.authLevel {
+		evs = append(evs, packet.EventPlayerAuth{ClientID: cid, Level: cur.authLevel})
+	}
+	if (cur.flags & exPlayerFlagAfk) != (prev.flags & exPlayerFlagAfk) {
+		evs = append(evs, packet.EventPlayerAfk{ClientID: cid, Afk: cur.flags&exPlayerFlagAfk != 0})
+	}
+	return evs
+}
+
+func (ss *SnapStorage) diffSpecChar(cid int, f []int) []packet.Event {
+	if len(f) < 2 {
+		return nil
+	}
+	pos := [2]int{f[0], f[1]}
+	if ss.prevSpecChar == nil {
+		ss.prevSpecChar = make(map[int][2]int)
+	}
+	prev, had := ss.prevSpecChar[cid]
+	ss.prevSpecChar[cid] = pos
+	if had && prev == pos {
+		return nil
+	}
+	return []packet.Event{packet.EventSpecChar{ClientID: cid, X: pos[0], Y: pos[1]}}
 }
 
 // deriveGame emits game/flag/round-state events by diffing the latest
