@@ -85,6 +85,11 @@ type Client struct {
 	// prediction input history — sent local inputs keyed by predicted tick,
 	// re-applied during prediction re-simulation (V9)
 	predInputs predInputBuffer
+
+	// prediction config + state (V9, V11) — protected by mu
+	predictEnabled bool
+	antiping       bool
+	predWorld      *PredictedWorld
 }
 
 // Option configures a Client at construction time.
@@ -110,6 +115,24 @@ func WithMapCache(cache *packet.MapCache) Option {
 	return func(c *Client) {
 		if cache != nil {
 			c.mapCache = cache
+		}
+	}
+}
+
+// WithPrediction enables DDNet-style client-side prediction of the local
+// character (V11). When disabled (the default), PredictedCharacter returns the
+// raw snapshot state.
+func WithPrediction(enabled bool) Option {
+	return func(c *Client) { c.predictEnabled = enabled }
+}
+
+// WithAntiping enables prediction of other players and entities in addition to
+// the local character (full DDNet antiping). Implies prediction is on.
+func WithAntiping(enabled bool) Option {
+	return func(c *Client) {
+		c.antiping = enabled
+		if enabled {
+			c.predictEnabled = true
 		}
 	}
 }
