@@ -309,7 +309,7 @@ T10a|.|reconcile smoothing — RE-SCOPED (B3 reverted, V21): keep prev+cur Predi
 T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
 T12|.|unified Action type (input/chat/whisper/emoticon/kill/vote/callvote/setteam/spectate) + c.Do(Action) → net6 & net7 send|V18,V22,I.consumer
 T13|.|TickState observation struct: predicted local+all chars, projectiles, lasers/pickups/flags, tuning, game/race, events-since-tick|V19,I.consumer
-T14|.|MapView: WHOLE-map queries — ALL layers (Solid/Unhook/HookThrough/Death/Freeze/Tele/Speedup/Switch) + TuneZone(tx,ty), OOB→Solid + Window crop, from twmap LayerKind{Game,Front,Tele,Speedup,Switch,Tune}|V19,V26,V28,I.mapview
+T14|x|MapView: WHOLE-map queries — ALL layers (Solid/Unhook/HookThrough/Death/Freeze/Tele/Speedup/Switch) + TuneZone(tx,ty), OOB→Solid + Window crop, from twmap LayerKind{Game,Front,Tele,Speedup,Switch,Tune}|V19,V26,V28,I.mapview
 T15|.|Frontend interface {Mode()TickMode; OnTick(*Client,TickState)[]Action} + WithFrontend/SetFrontend; same plug UI/ML-train/ML-exec|V18,V20,V24,I.consumer
 T16|.|tick driver: ONE buildTickState(tick); TickModeFixed loop per predicted tick + TickModeFrame loop (IntraTick+SmoothedCharacters overlay); call OnTick, apply []Action via c.Do|V19,V20,V21,V24,I.consumer
 T17|.|tests: Action↔send both protocols; TickState complete; both cadences share builder; one Frontend serves UI+ML plugs; MapView tiles + Window crop correct|V18,V19,V20,V22,V24

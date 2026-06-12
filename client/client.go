@@ -93,6 +93,33 @@ type Client struct {
 	predWorld      *PredictedWorld
 	predCol        *physics.Collision
 	predTun        physics.Tuning
+
+	// cached map view (built lazily once the map is available)
+	mapView *MapView
+}
+
+// MapView returns a queryable view of the complete local map, or nil if the
+// map is not yet available. The view is built once and cached.
+func (c *Client) MapView() *MapView {
+	c.mu.RLock()
+	mv := c.mapView
+	c.mu.RUnlock()
+	if mv != nil {
+		return mv
+	}
+	m := c.Map()
+	if m == nil {
+		return nil
+	}
+	mv = NewMapView(m)
+	c.mu.Lock()
+	if c.mapView == nil {
+		c.mapView = mv
+	} else {
+		mv = c.mapView
+	}
+	c.mu.Unlock()
+	return mv
 }
 
 // Option configures a Client at construction time.
