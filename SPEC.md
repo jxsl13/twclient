@@ -211,7 +211,8 @@ T3|x|define event structs (ChatEvent…WeaponChangeEvent) impl packet.Event|V1,V
 T4|x|parse msg-derived events in net6/reader.go processPayload switch + net7 equiv → SendEvent|V1,V4,V15,C5
 T4a|x|DDNet-ext msg (NETMSGTYPE_EX UUID) decode: teamsstate, killmsgteam, yourvote, racefinish, record, commandinfo(+group), votegroup, changeinfocooldown, myownmsg, mapsoundglobal → events|V4,V16,I.catalog
 T4d|.|0.7 obj-as-msg unify: Sv_ClientInfo/ClientDrop/SkinChange/Team/GameInfo/GameMsg/ServerSettings → E_player_join/leave/skin_change/team_set/game_info/game_msg/server_settings; map to 0.6 snap-obj source|V15a,V17,I.catalog
-T4e|.|ext snap-obj decode: DDNetCharacter(freeze/flags/jumps), DDNetPlayer(auth/afk), DamageInd/Finish net-events, SpecChar → events|V14,I.catalog
+T4e|x|DamageInd net-event (vanilla obj 20) → EventDamageInd in deriveTransient|V14,I.catalog
+T4e2|.|UUID-ext snap-obj decode: DDNetCharacter(freeze/flags/jumps), DDNetPlayer(auth/afk), SpecChar, Finish — BLOCKED on snapshot EX-type decode infra (B1)|V14,I.catalog
 T4b|x|chat/whisper unify: 0.6(team,cid,msg) & 0.7(mode,cid,targetID,msg) → E_chat/E_servermsg/E_whisper by mode|V15,V17,I.catalog
 T4c|x|sys-msg events: rcon_line, rcon_auth, rcon_cmd_list, server_error (net6/reader.go sys switch)|V1,I.catalog
 T5|x|SnapStorage: track map[cid]CharacterState all players + prev-snap copy (extend client/snap.go)|V12,C5
@@ -242,4 +243,5 @@ catalog + prediction verified against pulled sources:
 
 ```
 id|date|cause|fix
+B1|2026-06-13|T4e assumed DDNet ext snap-objects (DDNetCharacter/Player/SpecChar/Finish) directly decodable, but snapshot uses UUID-indexed EX-type indirection (NETOBJTYPE_EX) absent from net6/snap decoder. impl blind = silent corruption risk.|split: T4e=DamageInd (vanilla obj, done); T4e2=ext-obj infra deferred until snapshot EX-type decode added to net6/snap.go + packet snap delta
 ```

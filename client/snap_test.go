@@ -235,6 +235,14 @@ func TestDeriveEventsTransient(t *testing.T) {
 	if got := countEvents[packet.EventProjectileFired](ev); got != 1 {
 		t.Errorf("snap2: want 1 projectile-fired (only new id), got %d", got)
 	}
+
+	// A damage indicator emits EventDamageInd.
+	ss.processSnapshot(&packet.Snapshot{Tick: 3, Items: []packet.SnapItem{
+		{TypeID: net6.ObjDamageIndicator, ID: 1, Fields: []int{30, 40, 128}},
+	}})
+	if got := countEvents[packet.EventDamageInd](ss.deriveEvents()); got != 1 {
+		t.Errorf("want 1 damage-ind, got %d", got)
+	}
 }
 
 // V13: per-player motion events (move throttled, jump, dir, attack, weapon,

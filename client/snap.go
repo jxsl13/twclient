@@ -333,6 +333,10 @@ func (ss *SnapStorage) deriveTransient() []packet.Event {
 			if len(f) >= net6.SizeSoundWorld {
 				evs = append(evs, packet.EventSoundWorld{X: f[0], Y: f[1], SoundID: f[2]})
 			}
+		case net6.ObjDamageIndicator:
+			if len(f) >= net6.SizeDamageIndicator {
+				evs = append(evs, packet.EventDamageInd{X: f[0], Y: f[1], Angle: f[2]})
+			}
 		case net6.ObjProjectile:
 			curProj[it.ID] = struct{}{}
 			if _, seen := ss.prevProjectiles[it.ID]; !seen && len(f) >= net6.SizeProjectile {
