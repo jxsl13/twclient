@@ -218,7 +218,7 @@ T5|x|SnapStorage: track map[cid]CharacterState all players + prev-snap copy (ext
 T5a|x|snap-derived core: hook-by, weapon-change(self), player enter/leave sight (edge-trig)|V5,V12,V13,I.catalog
 T5b|x|snap-derived motion: player move(throttled)/jump/dir/attack/weapon/hook/emote for visible chars|V13,I.catalog
 T5c|x|transient-obj events: explosion/spawn/death/hammerhit/sound + projectile/laser (new-obj detect)|V14,I.catalog
-T5d|.|game/flag/round events: round-state, score, flag, spectarget|V16,I.catalog
+T5d|x|game/flag/round events: round-state, score, flag, spectarget|V16,I.catalog
 T6|x|callback registry on Client: On[E] generic + OnX wrappers, unregister, mutex, dispatch in handleEvent|V2,V3,V7,I.api
 T7|.|tests: registry concurrency, each event fires, unregister idempotent; cross-protocol — same event/handler fires on 0.6 & 0.7|V2,V3,V7,V17
 T8|.|input ring buffer keyed by tick (extend inputRecord); capture local clientID from snap|V9,I.predict

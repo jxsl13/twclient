@@ -119,6 +119,17 @@ type SnapStorage struct {
 	prevLasers      map[int]struct{}
 	gameInfo        GameInfoState
 	raceTime        RaceTime
+
+	// previous game/flag/round state for diffing (T5d). *Init flags suppress
+	// spurious events on the first snapshot.
+	prevGameState  int
+	gameStateInit  bool
+	prevScores     map[int]int
+	prevFlagRed    int
+	prevFlagBlue   int
+	flagInit       bool
+	prevSpecTarget int
+	specInit       bool
 }
 
 // charactersCopy returns a shallow copy of the latest per-client character
@@ -217,6 +228,72 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 	}
 
 	evs = append(evs, ss.deriveTransient()...)
+	evs = append(evs, ss.deriveGame()...)
+
+	return evs
+}
+
+// deriveGame emits game/flag/round-state events by diffing the latest
+// snapshot's GameInfo, PlayerInfo scores, GameData flag carriers, and
+// SpectatorInfo target against the previous snapshot's values (D in the
+// catalog).
+func (ss *SnapStorage) deriveGame() []packet.Event {
+	if ss.lastSnap == nil {
+		return nil
+	}
+	var evs []packet.Event
+
+	// Round state: game-state flags changed (warmup/paused/game-over/...).
+	if ss.gameStateInit && ss.gameInfo.GameStateFlags != ss.prevGameState {
+		evs = append(evs, packet.EventRoundState{StateFlags: ss.gameInfo.GameStateFlags})
+	}
+	ss.prevGameState = ss.gameInfo.GameStateFlags
+	ss.gameStateInit = true
+
+	// Per-player score changes.
+	curScores := make(map[int]int)
+	for _, it := range ss.lastSnap.Items {
+		if it.TypeID == net6.ObjPlayerInfo && len(it.Fields) >= net6.SizePlayerInfo {
+			cid := it.Fields[1]
+			score := it.Fields[3]
+			curScores[cid] = score
+			if prev, ok := ss.prevScores[cid]; ok && prev != score {
+				evs = append(evs, packet.EventScoreChange{ClientID: cid, Score: score})
+			}
+		}
+	}
+	ss.prevScores = curScores
+
+	// Flag carriers (CTF grab/drop/capture) from GameData.
+	for _, it := range ss.lastSnap.Items {
+		if it.TypeID == net6.ObjGameData && len(it.Fields) >= net6.SizeGameData {
+			red, blue := it.Fields[2], it.Fields[3]
+			if ss.flagInit {
+				if red != ss.prevFlagRed {
+					evs = append(evs, packet.EventFlag{Team: 0, CarrierID: red})
+				}
+				if blue != ss.prevFlagBlue {
+					evs = append(evs, packet.EventFlag{Team: 1, CarrierID: blue})
+				}
+			}
+			ss.prevFlagRed, ss.prevFlagBlue = red, blue
+			ss.flagInit = true
+			break
+		}
+	}
+
+	// Spectated target change (local spectator).
+	for _, it := range ss.lastSnap.Items {
+		if it.TypeID == net6.ObjSpectatorInfo && len(it.Fields) >= net6.SizeSpectatorInfo {
+			target := it.Fields[0]
+			if ss.specInit && target != ss.prevSpecTarget {
+				evs = append(evs, packet.EventSpecTarget{ClientID: ss.localCID, TargetID: target})
+			}
+			ss.prevSpecTarget = target
+			ss.specInit = true
+			break
+		}
+	}
 
 	return evs
 }

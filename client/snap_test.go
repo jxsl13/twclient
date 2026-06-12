@@ -136,6 +136,75 @@ func TestDeriveEventsCore(t *testing.T) {
 	}
 }
 
+// helpers for game-state objects
+func gameInfoItem(stateFlags int) packet.SnapItem {
+	f := make([]int, net6.SizeGameInfo)
+	f[1] = stateFlags // GameStateFlags
+	return packet.SnapItem{TypeID: net6.ObjGameInfo, ID: 0, Fields: f}
+}
+
+func playerInfoItem(cid, score int) packet.SnapItem {
+	f := make([]int, net6.SizePlayerInfo)
+	f[1] = cid   // ClientID
+	f[3] = score // Score
+	return packet.SnapItem{TypeID: net6.ObjPlayerInfo, ID: cid, Fields: f}
+}
+
+func gameDataItem(red, blue int) packet.SnapItem {
+	f := make([]int, net6.SizeGameData)
+	f[2] = red  // FlagCarrierRed
+	f[3] = blue // FlagCarrierBlue
+	return packet.SnapItem{TypeID: net6.ObjGameData, ID: 0, Fields: f}
+}
+
+func specInfoItem(target int) packet.SnapItem {
+	f := make([]int, net6.SizeSpectatorInfo)
+	f[0] = target // SpectatorId
+	return packet.SnapItem{TypeID: net6.ObjSpectatorInfo, ID: 0, Fields: f}
+}
+
+// T5d: game/flag/round events fire on change, not on first snapshot.
+func TestDeriveEventsGame(t *testing.T) {
+	var ss SnapStorage
+
+	ss.processSnapshot(&packet.Snapshot{Tick: 1, Items: []packet.SnapItem{
+		gameInfoItem(0),
+		playerInfoItem(5, 0),
+		gameDataItem(-3, -3),
+		specInfoItem(-1),
+	}})
+	if ev := ss.deriveEvents(); len(ev) != 0 {
+		// first snapshot establishes baselines; only enter-sight-like events
+		// would appear, but there are no characters here.
+		if n := countEvents[packet.EventRoundState](ev) +
+			countEvents[packet.EventScoreChange](ev) +
+			countEvents[packet.EventFlag](ev) +
+			countEvents[packet.EventSpecTarget](ev); n != 0 {
+			t.Fatalf("first snap should emit no game events, got %d", n)
+		}
+	}
+
+	ss.processSnapshot(&packet.Snapshot{Tick: 2, Items: []packet.SnapItem{
+		gameInfoItem(GameStateFlagPaused),
+		playerInfoItem(5, 10),
+		gameDataItem(7, -3),
+		specInfoItem(3),
+	}})
+	ev := ss.deriveEvents()
+	if got := countEvents[packet.EventRoundState](ev); got != 1 {
+		t.Errorf("want 1 round-state, got %d", got)
+	}
+	if got := countEvents[packet.EventScoreChange](ev); got != 1 {
+		t.Errorf("want 1 score-change, got %d", got)
+	}
+	if got := countEvents[packet.EventFlag](ev); got != 1 {
+		t.Errorf("want 1 flag (red carrier changed), got %d", got)
+	}
+	if got := countEvents[packet.EventSpecTarget](ev); got != 1 {
+		t.Errorf("want 1 spec-target, got %d", got)
+	}
+}
+
 // V14: transient world-event objects + projectile/laser fired-once.
 func TestDeriveEventsTransient(t *testing.T) {
 	var ss SnapStorage
