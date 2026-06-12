@@ -16,6 +16,17 @@ type PredictedWorld struct {
 	cores    map[int]*physics.Core
 	seed     map[int]CharacterState
 	baseTick int
+	// tuneAt resolves per-tile tuning (DDNet tune zones, V29). When set, each
+	// core's tuning is updated to its current tile before every Step.
+	tuneAt func(tileX, tileY int) physics.Tuning
+}
+
+// applyZoneTuning sets the core's tuning to the tune-zone at its current tile.
+func (w *PredictedWorld) applyZoneTuning(core *physics.Core) {
+	if w.tuneAt == nil {
+		return
+	}
+	core.SetTuning(w.tuneAt(int(core.Pos.X)/physics.TileSize, int(core.Pos.Y)/physics.TileSize))
 }
 
 // newPredictedWorld seeds a predicted world from a snapshot's character map at
@@ -61,6 +72,7 @@ func (w *PredictedWorld) advanceOwn(localCID, predTick int, inputs *predInputBuf
 		if !ok {
 			break
 		}
+		w.applyZoneTuning(core)
 		core.Step(inputToPhysics(in))
 	}
 }
@@ -81,6 +93,7 @@ func (w *PredictedWorld) advanceOthers(localCID, predTick int) {
 		}
 		in := extrapolatedInput(w.seed[cid])
 		for i := 0; i < steps; i++ {
+			w.applyZoneTuning(core)
 			core.Step(in)
 		}
 	}
@@ -152,6 +165,8 @@ func (c *Client) reconcilePrediction() {
 
 	predTick := c.predTime.PredTick()
 
+	mv := c.MapView()
+
 	c.mu.Lock()
 	col := c.predCol
 	tun := c.predTun
@@ -159,6 +174,14 @@ func (c *Client) reconcilePrediction() {
 	base := c.snap.lastTick
 	local := c.snap.localCID
 	antiping := c.antiping
+	// snapshot per-zone tunings so the resolver needs no per-tick locking.
+	var zoneTun map[int]physics.Tuning
+	if mv != nil && len(c.tunings) > 0 {
+		zoneTun = make(map[int]physics.Tuning, len(c.tunings))
+		for z, t := range c.tunings {
+			zoneTun[z] = t
+		}
+	}
 	c.mu.Unlock()
 
 	if col == nil || predTick <= 0 {
@@ -166,6 +189,15 @@ func (c *Client) reconcilePrediction() {
 	}
 
 	w := newPredictedWorld(col, tun, base, chars)
+	// Per-tile tuning via tune zones (V29), only when the map has tune data.
+	if mv != nil && zoneTun != nil {
+		w.tuneAt = func(tileX, tileY int) physics.Tuning {
+			if t, ok := zoneTun[mv.TuneZone(tileX, tileY)]; ok {
+				return t
+			}
+			return tun
+		}
+	}
 	w.advanceOwn(local, predTick, &c.predInputs)
 	if antiping {
 		w.advanceOthers(local, predTick)

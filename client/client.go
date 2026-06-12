@@ -93,6 +93,7 @@ type Client struct {
 	predWorld      *PredictedWorld
 	predCol        *physics.Collision
 	predTun        physics.Tuning
+	tunings        map[int]physics.Tuning // per tune-zone (zone 0 = default), V29
 
 	// cached map view (built lazily once the map is available)
 	mapView *MapView
@@ -481,6 +482,8 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.log.Info("map changed", "map", e.Info.Name)
 	case packet.EventInputTiming:
 		c.predTime.Adjust(e.IntendedTick, e.TimeLeft)
+	case packet.EventTuneParams:
+		c.setTuning(e.Raw)
 	case packet.EventClose:
 		c.log.Warn("server sent CLOSE", "reason", e.Reason)
 		c.setErr(ErrServerClosed)
