@@ -77,6 +77,10 @@ type Client struct {
 
 	// prediction time — tracks predicted game ticks for tick-driven input
 	predTime PredictedTime
+
+	// server-event callbacks — registered via On/OnXxx, dispatched from the
+	// event loop after snap state is updated and mu released (V2, V3)
+	callbacks callbackRegistry
 }
 
 // Option configures a Client at construction time.
@@ -293,23 +297,30 @@ func (c *Client) SendInput(input packet.PlayerInput) error {
 		return ErrNotConnected
 	}
 
+	// Send exactly one input per predicted-tick boundary (mirrors the real
+	// client's "NewPredTick > m_PredTick -> SendInput" gate). Callers may poll
+	// this faster than the tick rate; NextInput de-duplicates to one per tick.
+	predTick, ackTick, send := c.predTime.NextInput()
+	if !send {
+		return nil
+	}
+
+	data := packInput(&input)
+	return c.sess.SendInput(ackTick, predTick, inputSize, data)
+}
+
+// SendInputForTick sends an input explicitly tagged for the given predicted
+// tick, bypassing the per-tick throttle. Replay senders use it to deliver one
+// input for EVERY tick even when their polling loop skips a boundary — with a
+// few ticks of input lead the server buffers them until their tick.
+func (c *Client) SendInputForTick(predTick int, input packet.PlayerInput) error {
+	if c.sess == nil {
+		return ErrNotConnected
+	}
 	ackTick := c.predTime.AckTick()
-	predTick := c.predTime.PredTick()
 	if ackTick <= 0 || predTick <= 0 {
-		return nil // no snap yet — nothing to ack
+		return nil
 	}
-
-	c.inputMu.Lock()
-	newTick := predTick != c.lastInputTick
-	if !newTick && time.Since(c.lastInputTime) < inputMinInterval {
-		c.inputMu.Unlock()
-		return nil // throttled
-	}
-
-	c.lastInputTick = predTick
-	c.lastInputTime = time.Now()
-	c.inputMu.Unlock()
-
 	data := packInput(&input)
 	return c.sess.SendInput(ackTick, predTick, inputSize, data)
 }
@@ -405,6 +416,11 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.log.Warn("server sent CLOSE", "reason", e.Reason)
 		c.setErr(ErrServerClosed)
 	}
+
+	// Dispatch to registered callbacks after snap state is updated and any
+	// per-case mu has been released, so handlers may safely call back into
+	// the client (V2).
+	c.callbacks.dispatch(c, ev)
 }
 
 func (c *Client) setErr(err error) {
