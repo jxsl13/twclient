@@ -130,6 +130,10 @@ type SnapStorage struct {
 	flagInit       bool
 	prevSpecTarget int
 	specInit       bool
+	// roster: ObjClientInfo ids seen last snapshot, for join/leave on 0.6
+	// (the 0.7 reader emits these as messages instead, V15a).
+	prevClientIDs map[int]struct{}
+	rosterInit    bool
 }
 
 // charactersCopy returns a shallow copy of the latest per-client character
@@ -281,6 +285,31 @@ func (ss *SnapStorage) deriveGame() []packet.Event {
 			break
 		}
 	}
+
+	// Roster: ObjClientInfo appearing/disappearing => player join/leave. On 0.6
+	// this is the only join/leave source; on 0.7 the reader emits messages and
+	// these snapshot objects are absent (V15a). Names/skins are not decoded
+	// from the snapshot here, so only ClientID is reported.
+	curClientIDs := make(map[int]struct{})
+	for _, it := range ss.lastSnap.Items {
+		if it.TypeID == net6.ObjClientInfo {
+			curClientIDs[it.ID] = struct{}{}
+			if ss.rosterInit {
+				if _, seen := ss.prevClientIDs[it.ID]; !seen {
+					evs = append(evs, packet.EventPlayerJoin{ClientID: it.ID})
+				}
+			}
+		}
+	}
+	if ss.rosterInit {
+		for id := range ss.prevClientIDs {
+			if _, ok := curClientIDs[id]; !ok {
+				evs = append(evs, packet.EventPlayerLeave{ClientID: id})
+			}
+		}
+	}
+	ss.prevClientIDs = curClientIDs
+	ss.rosterInit = true
 
 	// Spectated target change (local spectator).
 	for _, it := range ss.lastSnap.Items {

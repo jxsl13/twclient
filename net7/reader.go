@@ -179,6 +179,48 @@ func (s *Session) processPayload(payload []byte) {
 			}
 		} else {
 			switch msgID {
+			case MsgGameSvMotd:
+				s.processMotd(msgData)
+			case MsgGameSvBroadcast:
+				s.processBroadcast(msgData)
+			case MsgGameSvChat:
+				s.processChat(msgData)
+			case MsgGameSvTeam:
+				s.processTeam(msgData)
+			case MsgGameSvKillMsg:
+				s.processKillMsg(msgData)
+			case MsgGameSvTuneParams:
+				s.processTuneParams(msgData)
+			case MsgGameSvWeaponPickup:
+				s.processWeaponPickup(msgData)
+			case MsgGameSvEmoticon:
+				s.processEmoticon(msgData)
+			case MsgGameSvVoteSet:
+				s.processVoteSet(msgData)
+			case MsgGameSvVoteStatus:
+				s.processVoteStatus(msgData)
+			case MsgGameSvVoteOptionAdd:
+				s.processVoteOptionAdd(msgData)
+			case MsgGameSvVoteOptionRemove:
+				s.processVoteOptionRemove(msgData)
+			case MsgGameSvVoteClearOptions:
+				s.processVoteClearOptions()
+			case MsgGameSvServerSettings:
+				s.processServerSettings(msgData)
+			case MsgGameSvClientInfo:
+				s.processClientInfo(msgData)
+			case MsgGameSvClientDrop:
+				s.processClientDrop(msgData)
+			case MsgGameSvGameInfo:
+				s.processGameInfo(msgData)
+			case MsgGameSvGameMsg:
+				s.processGameMsg(msgData)
+			case MsgGameSvSkinChange:
+				s.processSkinChange(msgData)
+			case MsgGameSvCommandInfo:
+				s.processCommandInfo(msgData)
+			case MsgGameSvCommandInfoRemove:
+				s.processCommandInfoRemove(msgData)
 			case MsgGameSvRaceFinish:
 				s.processRaceFinish(msgData)
 			case MsgGameSvCheckpoint:

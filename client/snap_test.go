@@ -205,6 +205,31 @@ func TestDeriveEventsGame(t *testing.T) {
 	}
 }
 
+// V15a: on 0.6, ObjClientInfo presence drives the same join/leave events the
+// 0.7 reader emits as messages.
+func TestDeriveRosterJoinLeave(t *testing.T) {
+	var ss SnapStorage
+	ci := func(id int) packet.SnapItem {
+		return packet.SnapItem{TypeID: net6.ObjClientInfo, ID: id, Fields: make([]int, net6.SizeClientInfo)}
+	}
+
+	// First snapshot establishes the baseline roster {1,2}; no events.
+	ss.processSnapshot(&packet.Snapshot{Tick: 1, Items: []packet.SnapItem{ci(1), ci(2)}})
+	if ev := ss.deriveEvents(); countEvents[packet.EventPlayerJoin](ev) != 0 {
+		t.Errorf("first snapshot must not emit joins")
+	}
+
+	// Player 2 leaves, player 3 joins.
+	ss.processSnapshot(&packet.Snapshot{Tick: 2, Items: []packet.SnapItem{ci(1), ci(3)}})
+	ev := ss.deriveEvents()
+	if got := countEvents[packet.EventPlayerJoin](ev); got != 1 {
+		t.Errorf("want 1 join, got %d", got)
+	}
+	if got := countEvents[packet.EventPlayerLeave](ev); got != 1 {
+		t.Errorf("want 1 leave, got %d", got)
+	}
+}
+
 // V14: transient world-event objects + projectile/laser fired-once.
 func TestDeriveEventsTransient(t *testing.T) {
 	var ss SnapStorage
