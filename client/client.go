@@ -70,8 +70,9 @@ type Client struct {
 	doneCh       chan struct{}
 
 	// disconnection error — set by event loop, read by Err()
-	errMu   sync.Mutex
-	lastErr error
+	errMu    sync.Mutex
+	lastErr  error
+	lastDisc DisconnectReason // classified last CTRL_CLOSE (V34), guarded by errMu
 
 	// input rate-limiting state — only accessed from SendInput callers
 	inputMu       sync.Mutex
@@ -319,6 +320,14 @@ func (c *Client) Err() error {
 	return c.lastErr
 }
 
+// LastDisconnect returns the classified reason for the most recent CTRL_CLOSE
+// (V34), or the zero value if the client has not been disconnected.
+func (c *Client) LastDisconnect() DisconnectReason {
+	c.errMu.Lock()
+	defer c.errMu.Unlock()
+	return c.lastDisc
+}
+
 // Capabilities returns the DDNet server capabilities last announced for this
 // connection, or the zero value if none were sent (V47).
 func (c *Client) Capabilities() packet.ServerCapabilities {
@@ -527,7 +536,11 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.caps = e.Caps
 		c.mu.Unlock()
 	case packet.EventClose:
-		c.log.Warn("server sent CLOSE", "reason", e.Reason)
+		reason := NewDisconnectReason(e.Reason)
+		c.errMu.Lock()
+		c.lastDisc = reason
+		c.errMu.Unlock()
+		c.log.Warn("server sent CLOSE", "reason", e.Reason, "kind", reason.Kind.String())
 		c.setErr(ErrServerClosed)
 	}
 
