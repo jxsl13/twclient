@@ -1,0 +1,80 @@
+package packer
+
+import "testing"
+
+// BenchmarkNewUnpacker models the per-inbound-message allocation the reader
+// pays today: every message constructs a fresh Unpacker that copies the
+// payload (make([]byte,len)+copy). This is the cost T37 targets on the hot
+// snap path.
+func BenchmarkNewUnpacker(b *testing.B) {
+	data := make([]byte, 256)
+	b.ReportAllocs()
+	for b.Loop() {
+		u := NewUnpacker(data)
+		_ = u
+	}
+}
+
+// BenchmarkUnpackerReset measures the steady-state cost of a pooled Unpacker
+// reused across messages (the T37 target shape): Reset reuses the grown buffer
+// so no per-message allocation after warmup.
+func BenchmarkUnpackerReset(b *testing.B) {
+	var buf []byte
+	for i := range 256 {
+		buf = append(buf, PackInt(i*7-100)...)
+	}
+	u := NewUnpacker(nil)
+	b.ReportAllocs()
+	for b.Loop() {
+		u.Reset(buf)
+		for u.RemainingSize() > 0 {
+			if _, err := u.GetInt(); err != nil {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkUnpackInt(b *testing.B) {
+	data := PackInt(123456)
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = UnpackInt(data)
+	}
+}
+
+func BenchmarkGetStringSanitized(b *testing.B) {
+	data := append([]byte("a moderately long player chat message hello world"), 0)
+	u := NewUnpacker(data)
+	b.ReportAllocs()
+	for b.Loop() {
+		u.Reset(data)
+		if _, err := u.GetString(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPackInt(b *testing.B) {
+	b.ReportAllocs()
+	n := 0
+	for b.Loop() {
+		_ = PackInt(n)
+		n++
+	}
+}
+
+func BenchmarkPackStr(b *testing.B) {
+	const s = "default"
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = PackStr(s)
+	}
+}
+
+func BenchmarkPackMsgID(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = PackMsgID(20, true)
+	}
+}

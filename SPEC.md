@@ -2,7 +2,7 @@
 
 ## §G — goal
 
-Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven consumer path (`Observer` view-only + single `Controller` view+action) serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept). + resilient connection: auto-reconnect that resumes the SAME tee via DDNet timeout-code after a drop, and reconnect after kick/ban by waiting out the ban while periodically polling for early unban. + connect to password-protected servers. + remote console (rcon): log in, send commands, and react to rcon log lines.
+Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven consumer path (`Observer` view-only + single `Controller` view+action) serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept). + resilient connection: auto-reconnect that resumes the SAME tee via DDNet timeout-code after a drop, and reconnect after kick/ban by waiting out the ban while periodically polling for early unban. + connect to password-protected servers. + remote console (rcon): log in, send commands, and react to rcon log lines. + PERFORMANCE: minimize CPU + heap alloc on hot paths (snap delta decode, packet unpack/pack, prediction re-sim, per-tick event diff) of the LIBRARY client (`packer`,`packet`,`net6`,`net7`,`physics`,`client`; ⊥ `cmd/racebot`) — benchmark-driven, public API + observable behavior UNCHANGED. profile first → optimize PROVEN hot paths → re-bench.
 
 ## §C — constraints
 
@@ -327,6 +327,29 @@ timeout-resume flow (DDNet 0.6 only, T22/§R VERIFIED): after entergame send cha
 ban flow: CTRL_CLOSE reason → `DisconnectReason`. Banned → auto-reconnect keeps retrying on the `Backoff` schedule (default 1s,2s,…,cap 1h); each retry doubles as an unban poll (server may lift ban early) — first attempt with no CLOSE ends the wait + `Backoff.Reset()`. Banned+finite duration MAY seed the first wait at ≥ duration. unknown/permanent ban → retry until `MaxAttempts` (0=∞) then give up.
 shutdown: every wait + the connect attempt itself `select` on `ctx.Done()`; ctx cancel returns promptly (V39). graceful stop sends a clean CTRL_CLOSE disconnect to the server (V40), so the tee is NOT left for the timeout path (timeout-resume is for UNEXPECTED drops, not deliberate quit).
 
+### performance — hot-path optimization (T34–T40)
+scope = LIBRARY client only (`packer`,`packet`,`net6`,`net7`,`physics`,`client`); ⊥ `cmd/racebot` (separate effort). method = MEASURE-then-cut: bench + pprof FIRST, optimize only profile-proven hot paths, re-bench to confirm. public API + behavior unchanged (V48); every existing test still green.
+```
+harness (T34): table benches w/ -benchmem, ⊥ new deps (testing.B only):
+  packet:  BenchmarkProcessSnap / BenchmarkApplyDelta (full + empty delta; realistic 64-char snap)
+  packer:  BenchmarkUnpackInt / BenchmarkGetString / BenchmarkPackInt+PackStr+PackMsgID
+  net6/7:  BenchmarkProcessMessage (snap chunk → event)
+  client:  BenchmarkPredictTick (PredictedWorld.Tick) / BenchmarkBuildTickState / BenchmarkDeriveEvents (snap.go diff)
+  pprof:   `go test -bench . -benchmem -cpuprofile -memprofile` per pkg; record baseline alloc/op + ns/op.
+profile (T35): rank top alloc-sites + CPU hot fns from pprof; record measured top-N here. ⊥ optimize unmeasured.
+```
+measured candidate hot paths (pre-profile, confirm in T35):
+```
+loc|cost|fix
+packet/snap.go:231 applyDelta updated-item lookup|O(numUpdated × result.Items) linear scan = O(n²)/tick|index map cid→idx, O(1) (DDNet CSnapshot item hashtable)
+packer NewUnpacker (73 sites)|make([]byte,len)+copy per inbound message|reuse pooled/Reset Unpacker per session reader; ⊥ alloc+copy per msg
+packet/snap.go:221 absFields make([]int,size)|per updated item per tick|retained → keep alloc, but size from ItemSizeFn (no GetInt); ? small-int slab
+packer PackInt/PackStr/PackMsgID|fresh []byte per field on build|append into a reused builder buffer (AppendInt(dst,n)/AppendStr); builders concat into one buf
+packer GetStringSanitized:104 var buf []byte|grow-by-append, realloc churn|preallocate by RemainingSize(); single []byte→string at end
+client/snap.go derive* (:283-285,charactersCopy:190)|intermediate []Event per sub-diff + map copy per tick|append into one evs (cap=prev len); reuse prev-map by swap not realloc
+```
+DDNet/TW perf refs: snapshot item hashtable for O(1) item lookup (`snapshot.cpp` `CSnapshot::GetItemIndex`); fixed MAX_SNAPSHOT_SIZE preallocated buffers, ⊥ per-tick heap; varint packed into caller-owned buffers (`AppendVarint`). Go: `sync.Pool` for transient scratch (already in `deltaScratch`), preallocate slice cap, avoid `[]byte`↔`string` copies, escape-analysis (`go build -gcflags=-m`) to keep hot locals on stack.
+
 ## §V — invariants
 
 - V1: new event types ! implement `packet.Event` (`eventTag()`), emitted via `packet.SendEvent` on `EventCh()`. `packet/event.go`.
@@ -379,6 +402,11 @@ shutdown: every wait + the connect attempt itself `select` on `ctx.Done()`; ctx 
 - V44: rcon cmd requires auth — `Rcon(cmd)` errors (`ErrNotAuthed`) when `!RconAuthed()`. auth state derived from `EventRconAuth` (on/off+level), cleared on disconnect (CTRL_CLOSE / reader EOF). ⊥ send `SysRconCmd` before auth confirmed.
 - V45: rcon re-auth on reconnect — `WithRconPassword` held on `Client`, re-sent after EACH (re)connect like identity (V33); ⊥ silently stay unauthed post-reconnect. rcon password ⊥ cleartext-logged (as V42).
 - V46: rcon reactions serial — `OnRconLine`/`OnRconAuth`/`OnRconCmd` fire from the event path (serial, V2); handler ⊥ block; MAY call `c.Rcon(...)` (dispatch after mu release, V2). registry concurrency-safe (V3,V7).
+- V48: perf work ⊥ change public API or OBSERVABLE behavior — optimization only. ∀ existing tests pass UNCHANGED (incl `-race`); no signature/type/event/wire change. a perf change that needs a behavior change is out of scope (escalate, ⊥ silently alter).
+- V49: optimize only PROFILE-PROVEN hot paths — pprof/-benchmem ranks the target FIRST. each optimized path has a committed `Benchmark*` (with `-benchmem`); baseline (before) + result (after) recorded in §PERF/commit. ⊥ claim a speedup w/o a bench delta; ⊥ speculative micro-opt of cold code.
+- V50: snap delta item lookup O(1) — `applyDelta` resolves updated-item → existing-item via an index map (`itemKey`→idx), ⊥ O(numUpdated × items) linear scan (current `snap.go:231`). mirrors DDNet item hashtable. result identical to linear version (test parity).
+- V51: bounded alloc on steady-state hot paths — per-tick (snap decode, prediction tick, tickstate build, event diff) and per-message (unpack) paths reuse pooled/Reset buffers + preallocate slice cap; ⊥ unbounded per-call `make`. data RETAINED past the call (snapshot `Fields`, emitted events) is still freshly allocated/copied out — measured by `allocs/op` not zeroed blindly.
+- V52: pooled scratch ⊥ alias retained state — anything stored beyond the call (in a `Snapshot`, `TickState`, event) is COPIED out of pooled/`Reset` buffers before the buffer is reused or returned to the pool. ⊥ use-after-free / cross-tick aliasing. (safety corollary of V51; `-race` + parity tests guard.)
 
 ## §T — tasks
 
@@ -428,8 +456,16 @@ T29|x|server password: WithPassword option + plumb Connect→Login→SysInfo(ver
 T30|x|rcon client API: session SendRconAuth/SendRconCmd (net6+net7); RconLogin(ctx,pw) (await EventRconAuth on); Rcon(cmd) require authed (ErrNotAuthed); RconAuthed(); WithRconPassword auto-login|V43,V44,I.rcon
 T31|x|rcon state + reactions: OnRconLine/OnRconAuth/OnRconCmd callbacks; track auth from EventRconAuth, clear on disconnect; re-auth after reconnect; ⊥ log pw cleartext|V44,V45,V46,V33,I.rcon
 T32|x|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRconLine fires, re-auth after reconnect, both protocols|V43,V44,V45,V46
+T34|x|bench harness (-benchmem, no new deps): BenchmarkApplyDelta/ProcessSnap (packet), UnpackInt/GetString/Pack* (packer), ProcessMessage (net6/7), PredictTick/BuildTickState/DeriveEvents (client); record baseline ns/op + allocs/op|V49,I.perf
+T35|.|profile: cpuprofile+memprofile per pkg → rank top CPU fns + alloc sites; record measured top-N in §PERF; pick optimization targets (⊥ unmeasured)|V48,V49,I.perf
+T36|.|applyDelta O(1) item index: replace linear updated-item scan (snap.go:231) with itemKey→idx map; parity test vs old result; bench delta|V50,V48,V49
+T37|.|Unpacker reuse: pool/Reset across the 73 NewUnpacker sites (net6/net7 readers) — one buffer per session reader, ⊥ alloc+copy per inbound msg; verify no cross-msg aliasing|V51,V52,V48
+T38|.|packer pack path: AppendInt/AppendStr/AppendMsgID into a reused builder buffer (keep PackInt etc as thin wrappers); GetStringSanitized preallocate buf by RemainingSize|V51,V48
+T39|.|client per-tick alloc cut: snap.go derive* append into one evs (cap=prev len), swap prev/cur maps instead of realloc, trim charactersCopy churn|V51,V52,V48
+T40|.|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
+perf effort (library client, ⊥ racebot): T34–T40 = `.` (pending). build order: T34 (bench baseline) → T35 (profile/rank) → T36 (snap O(1)) → T37 (unpacker reuse) → T38 (packer pack) → T39 (client per-tick) → T40 (re-bench/verify). T34+T35 are measure-FIRST gates — ⊥ optimize (T36–T39) before profile confirms targets (V49).
 build order: T29 (password) → T30 (rcon API) → T31 (rcon state+reactions) → T32 (rcon tests) → T22 (research wire) → T23 (disconnect classify) → T24 (timeout code send) → T25 (reconnect-with-timeout) → T26 (auto-reconnect loop) → T27 (OnDisconnect callback) → T28 (reconnect tests).
 prior build order (completed): T19 → T14 → T21 → T13 → T12 → T10a → T15 → T16 → T20 → T17.
 
@@ -441,6 +477,7 @@ catalog + prediction verified against pulled sources:
 - local: `net6/constants.go`, `net6/reader.go`, `client/snap.go`, `packet/event.go`.
 - DDNet timeout-code (T22, VERIFIED `~/Desktop/Development/ddnet`): NOT a dedicated netmsg — code is sent as a CHAT COMMAND `/timeout <code>` from `CClient::OnPostConnect` (`src/engine/client/client.cpp:527-536`) AFTER entergame, only when the server advertises `SERVERCAPFLAG_CHATTIMEOUTCODE` (`src/engine/shared/protocol_ex.h:34`). server handler `ConTimeout` (`src/game/server/ddracechat.cpp:565-600`): matches `/timeout` arg against every player's stored `m_aTimeoutCode`; on match `Server()->SetTimedOut(i, newClientId)` REClaims the timed-out tee + re-sends tuning. drop side: `SetTimeoutProtected` keeps the tee. SIXUP/0.7 CANNOT reclaim (server logs "0.7 clients can not reclaim … 0.6 client can") → resume = DDNet 0.6 ONLY (V37). code: DDNet derives MD5(seed+"normal"/"dummy"+server-addrs) via `generate_password` (`client.cpp:583`), or fixed `cl_timeout_code`; ANY stable string works — server only compares equality, so a per-client stable random satisfies V32. NOTE: our client does not yet parse server caps (NETMSG_EX) → cap-gating unavailable; T24 sends `/timeout` best-effort on 0.6 when resume enabled, cap-parse = `?` future refinement.
 - ban/kick CTRL_CLOSE reason strings (T23, ← `~/Desktop/Development/ddnet` + teeworlds): verify exact text in `src/engine/server/server.cpp` (`Kick`/ban) + `src/engine/shared/network*.cpp` — "Kicked (...)", ban "Banned (...)"/"You have been banned" (+duration text), "Server shutdown". confirm on T23.
+- perf (T34–T40, ← DDNet `src/engine/shared/snapshot.cpp` + Go runtime/profiling): DDNet `CSnapshot::GetItemIndex` uses an item index/hashtable for O(1) lookup (⊥ linear) → V50; `CSnapshotDelta::UnpackDelta` works over fixed preallocated `MAX_SNAPSHOT_SIZE` buffers, item field counts from `CSnapshotItem` type tables (no per-item size read) → V51. teeworlds `datasrc/network.py` item field counts ≅ our `ItemSizeFn`. Go: profile via `go test -bench . -benchmem -cpuprofile cpu.out -memprofile mem.out` + `go tool pprof`; escape analysis `go build -gcflags=-m`; `sync.Pool` for per-call scratch (already `deltaScratch`); prealloc slice cap; avoid `[]byte`↔`string` copies (`unsafe`-free). VERIFY actual hot paths on real snap traffic in T35 before optimizing (V49).
 
 ## §A — architecture (ref, ex-docs/ARCHITECTURE.md)
 
