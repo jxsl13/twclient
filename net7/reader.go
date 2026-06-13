@@ -411,6 +411,8 @@ type raceFinishEvent struct {
 	TimeCentis int
 }
 
+// ToRaceFinish converts the 0.7 SV_RACE_FINISH message into the
+// protocol-unified packet.EventRaceFinish.
 func (e raceFinishEvent) ToRaceFinish() packet.EventRaceFinish {
 	return packet.EventRaceFinish{
 		TimeCentis: e.TimeCentis,
@@ -427,6 +429,8 @@ type checkpointEvent struct {
 	DiffCentis int
 }
 
+// ToCheckpoint converts the 0.7 SV_CHECKPOINT message into the
+// protocol-unified packet.EventCheckpoint.
 func (e checkpointEvent) ToCheckpoint() packet.EventCheckpoint {
 	return packet.EventCheckpoint{
 		DiffCentis: e.DiffCentis,

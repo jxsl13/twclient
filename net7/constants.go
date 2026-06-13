@@ -2,8 +2,12 @@
 package net7
 
 const (
-	MaxClients    = 64
-	NetVersion    = "0.7 802f1be60a05665f"
+	// MaxClients is the maximum player slots a 0.7 server exposes.
+	MaxClients = 64
+	// NetVersion is the 0.7 network version string sent in the INFO message; it
+	// must match the server's expected version (teeworlds `GAME_NETVERSION`).
+	NetVersion = "0.7 802f1be60a05665f"
+	// ClientVersion is the 0.7 client version advertised at login (CLIENT_VERSION7).
 	ClientVersion = 0x0705
 
 	// Split is the chunk header split parameter for 0.7.
