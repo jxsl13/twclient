@@ -1,7 +1,6 @@
 package master
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -9,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jxsl13/twclient/net6"
 	"github.com/jxsl13/twclient/net7"
 	"github.com/jxsl13/twclient/network"
 	"github.com/jxsl13/twclient/packer"
@@ -16,21 +16,12 @@ import (
 )
 
 // Connless server-info query: ask a single server for its info over the
-// connless protocol, without opening a play session (V57/V58). Wire format
-// pinned from DDNet (0.6) and teeworlds (0.7) sources — see SPEC §R.
-//
-// Both protocols use the same browser magics. 0.6 frames connless packets with
-// a 6-byte 0xFF prefix and encodes numbers as decimal strings; 0.7 frames them
-// with a 9-byte token header (and a prior NET_CTRLMSG_TOKEN handshake) and
-// encodes numbers as varints.
-var (
-	browseGetInfo = []byte{255, 255, 255, 255, 'g', 'i', 'e', '3'} // SERVERBROWSE_GETINFO
-	browseInfo    = []byte{255, 255, 255, 255, 'i', 'n', 'f', '3'} // SERVERBROWSE_INFO
-)
-
+// connless protocol, without opening a play session (V57/V58). All wire framing
+// comes from net6/net7 helpers — this package never hand-rolls packet bytes
+// (V59); only the info body is decoded here (decimal-string ints for 0.6,
+// varints for 0.7), since returning master.ServerInfo from net6/net7 would
+// create an import cycle.
 const (
-	connless6Prefix = 6 // 0.6: six 0xFF bytes precede connless data
-
 	serverInfoFlagPassword = 1 // SERVER_FLAG_PASSWORD / SERVERINFO_FLAG_PASSWORD
 
 	maxInfoReads = 8 // stray-packet tolerance while waiting for the info reply
@@ -87,29 +78,17 @@ func QueryServerInfo(ctx context.Context, version packet.Version, addr string, o
 
 func query6(ctx context.Context, conn *network.Conn) (ServerInfo, error) {
 	token := byte(rand.Intn(256))
-	req := make([]byte, 0, connless6Prefix+len(browseGetInfo)+1)
-	for range connless6Prefix {
-		req = append(req, 0xff)
-	}
-	req = append(req, browseGetInfo...)
-	req = append(req, token)
-	if err := conn.SendRaw(req); err != nil {
+	if err := conn.SendRaw(net6.BuildInfoRequestConnless(token)); err != nil {
 		return ServerInfo{}, fmt.Errorf("master: 0.6 send getinfo: %w", err)
 	}
-
 	for range maxInfoReads {
 		data, err := conn.RecvContext(ctx)
 		if err != nil {
 			return ServerInfo{}, fmt.Errorf("master: 0.6 recv info: %w", err)
 		}
-		if len(data) < connless6Prefix+len(browseInfo) {
-			continue
+		if body, ok := net6.ConnlessInfoPayload(data); ok {
+			return parseInfo6(body)
 		}
-		body := data[connless6Prefix:]
-		if !bytes.Equal(body[:len(browseInfo)], browseInfo) {
-			continue // not an inf3 packet
-		}
-		return parseInfo6(body[len(browseInfo):])
 	}
 	return ServerInfo{}, fmt.Errorf("master: 0.6 no info response")
 }
@@ -184,51 +163,34 @@ func query7(ctx context.Context, conn *network.Conn) (ServerInfo, error) {
 		return ServerInfo{}, err
 	}
 
-	// 2. Connless getinfo, framed by net7's connless header (flag+token+resp).
-	hdr := net7.Header{Flags: net7.Flags{Connless: true}, Token: serverToken, ResponseToken: clientToken}
-	gi := hdr.Pack()
-	gi = append(gi, browseGetInfo...)
-	gi = append(gi, packer.PackInt(int(rand.Int31()))...) // request token (varint, echoed back)
+	// 2. Connless getinfo, framed by net7's connless helper.
+	gi := net7.BuildInfoRequestConnless(serverToken, clientToken, int(rand.Int31()))
 	if err := conn.SendRaw(gi); err != nil {
 		return ServerInfo{}, fmt.Errorf("master: 0.7 send getinfo: %w", err)
 	}
-
 	for range maxInfoReads {
 		data, err := conn.RecvContext(ctx)
 		if err != nil {
 			return ServerInfo{}, fmt.Errorf("master: 0.7 recv info: %w", err)
 		}
-		if len(data) < net7.HeaderSizeConnless+len(browseInfo) {
-			continue
+		if body, ok := net7.ConnlessInfoPayload(data); ok {
+			return parseInfo7(body)
 		}
-		body := data[net7.HeaderSizeConnless:]
-		if !bytes.Equal(body[:len(browseInfo)], browseInfo) {
-			continue
-		}
-		return parseInfo7(body[len(browseInfo):])
 	}
 	return ServerInfo{}, fmt.Errorf("master: 0.7 no info response")
 }
 
 // recvServerToken7 waits for the server's NET_CTRLMSG_TOKEN control reply and
-// returns the token it assigned (carried in the control payload, offset 8-11).
-// Framing mirrors net7.Session.Handshake.
+// returns the token it assigned, via net7.ParseTokenResponse.
 func recvServerToken7(ctx context.Context, conn *network.Conn) (packet.Token, error) {
 	for range maxInfoReads {
 		data, err := conn.RecvContext(ctx)
 		if err != nil {
 			return packet.Token{}, fmt.Errorf("master: 0.7 recv token: %w", err)
 		}
-		var hdr net7.Header
-		if err := hdr.Unpack(data); err != nil {
-			continue
+		if tok, ok := net7.ParseTokenResponse(data); ok {
+			return tok, nil
 		}
-		if !hdr.Flags.Control || len(data) < 12 || data[7] != net7.MsgCtrlToken {
-			continue
-		}
-		var tok packet.Token
-		copy(tok[:], data[8:12])
-		return tok, nil
 	}
 	return packet.Token{}, fmt.Errorf("master: 0.7 no token reply")
 }

@@ -126,12 +126,9 @@ func fakeUDPServer(t *testing.T, handler func(req []byte) []byte) string {
 // login/handshake — only the getinfo exchange.
 func TestQueryServerInfo06(t *testing.T) {
 	addr := fakeUDPServer(t, func(req []byte) []byte {
-		// Expect a connless getinfo; reply with inf3.
-		reply := make([]byte, 0)
-		for range connless6Prefix {
-			reply = append(reply, 0xff)
-		}
-		reply = append(reply, browseInfo...)
+		// Expect a connless getinfo; reply with inf3 (6×0xFF + magic + body).
+		reply := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
+		reply = append(reply, packet.ServerBrowseInfo...)
 		reply = append(reply, build06Body()...)
 		return reply
 	})
@@ -161,7 +158,7 @@ func TestQueryServerInfo07(t *testing.T) {
 		}
 		// Otherwise = connless getinfo → inf3 reply (9-byte header ignored on recv).
 		reply := make([]byte, net7.HeaderSizeConnless)
-		reply = append(reply, browseInfo...)
+		reply = append(reply, packet.ServerBrowseInfo...)
 		reply = append(reply, build07Body()...)
 		return reply
 	})
