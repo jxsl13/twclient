@@ -71,6 +71,75 @@ func TestRoundRobinFailover(t *testing.T) {
 	}
 }
 
+// V67: one Fetch exhausts every master exactly once (in rotation) before
+// returning an error when all are down.
+func TestRoundRobinExhaustsAllThenErrors(t *testing.T) {
+	masters := []string{"a", "b", "c", "d"}
+	allDown := map[string]error{"a": errDown, "b": errDown, "c": errDown, "d": errDown}
+	try, hits := newTry(masters, allDown)
+
+	_, err := RoundRobin().Fetch(t.Context(), masters, try)
+	if err == nil {
+		t.Fatal("want error when all masters are down")
+	}
+	for _, m := range masters {
+		if got := hits[m].Load(); got != 1 {
+			t.Errorf("master %q attempted %d times, want exactly 1 (each tried once before erroring)", m, got)
+		}
+	}
+}
+
+// V67: when only the rotation-start master is down, the call advances to the
+// next master in rotation and recovers.
+func TestRoundRobinStartDownRecovers(t *testing.T) {
+	masters := []string{"a", "b", "c"}
+	p := RoundRobin()
+	// First call rotates start to "a" (cursor 0). Take "a" down → must advance
+	// to "b" and succeed within the same call.
+	try, hits := newTry(masters, map[string]error{"a": errDown})
+	got, err := p.Fetch(t.Context(), masters, try)
+	if err != nil || len(got) == 0 {
+		t.Fatalf("want recovery via the next master, got err=%v", err)
+	}
+	if got[0].Location != "b" {
+		t.Errorf("recovered via %q, want b (next in rotation after down start)", got[0].Location)
+	}
+	if hits["a"].Load() != 1 || hits["b"].Load() != 1 {
+		t.Errorf("expected a then b attempted once each: a=%d b=%d", hits["a"].Load(), hits["b"].Load())
+	}
+	if hits["c"].Load() != 0 {
+		t.Errorf("c should be untouched (b already succeeded): c=%d", hits["c"].Load())
+	}
+}
+
+// V67: the rotation start advances across calls (load spread), so over n calls
+// each master is the starting master once.
+func TestRoundRobinRotatesStartAcrossCalls(t *testing.T) {
+	masters := []string{"a", "b", "c"}
+	p := RoundRobin()
+	starts := make([]string, 0, 3)
+	for range 3 {
+		try, hits := newTry(masters, nil) // all up → only the start master is hit
+		got, err := p.Fetch(t.Context(), masters, try)
+		if err != nil {
+			t.Fatal(err)
+		}
+		starts = append(starts, got[0].Location)
+		hitCount := 0
+		for _, m := range masters {
+			hitCount += int(hits[m].Load())
+		}
+		if hitCount != 1 {
+			t.Errorf("all up → exactly one master hit per call, got %d", hitCount)
+		}
+	}
+	// Three consecutive calls → three distinct start masters (full rotation).
+	seen := map[string]bool{starts[0]: true, starts[1]: true, starts[2]: true}
+	if len(seen) != 3 {
+		t.Errorf("start should rotate across 3 calls, got %v", starts)
+	}
+}
+
 // V64: ChooseFastest picks a working master, caches it, and reuses it (the
 // concurrent probe runs only on the first call).
 func TestChooseFastestCachesBest(t *testing.T) {
