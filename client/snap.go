@@ -121,8 +121,8 @@ type SnapStorage struct {
 	prevLasers      map[int]struct{}
 	// projectiles holds the latest snapshot's projectile data for prediction.
 	projectiles map[int]packet.ProjectileState
-	gameInfo        GameInfoState
-	raceTime        RaceTime
+	gameInfo    GameInfoState
+	raceTime    RaceTime
 
 	// previous game/flag/round state for diffing (T5d). *Init flags suppress
 	// spurious events on the first snapshot.
@@ -634,7 +634,17 @@ func (ss *SnapStorage) updateFromSnap(snap *packet.Snapshot) {
 	}
 	// Build the per-client character map for this snapshot, rotating the
 	// previous map into prevCharacters so snap-derived events can diff them.
-	newChars := make(map[int]CharacterState)
+	// Double-buffer (V51): reuse the now-stale prevCharacters backing map
+	// (cleared + refilled) as the new current, so steady-state ticks allocate
+	// no map. Safe because callers receive COPIES via charactersCopy (V52) —
+	// ss.characters is never handed out by reference — and processSnapshot runs
+	// under the write lock while readers hold the read lock.
+	newChars := ss.prevCharacters
+	if newChars == nil {
+		newChars = make(map[int]CharacterState, len(snap.Items))
+	} else {
+		clear(newChars)
+	}
 	for _, item := range snap.Items {
 		if item.TypeID == net6.ObjCharacter {
 			newChars[item.ID] = characterFromFields(item.Fields)
