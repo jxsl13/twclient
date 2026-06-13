@@ -425,25 +425,6 @@ func (s *Session) recvAndAckTimeout(ctx context.Context, timeout time.Duration) 
 	return hdr, payload, nil
 }
 
-// DrainResponses receives up to n packets, updating ack as it goes,
-// and returns all payloads collected.
-func (s *Session) DrainResponses(n int) [][]byte {
-	drainTimeout := max(s.conn.ReadTimeout()/10, 5*time.Millisecond)
-	ctx := context.Background()
-
-	var payloads [][]byte
-	for range n {
-		_, payload, err := s.recvAndAckTimeout(ctx, drainTimeout)
-		if err != nil {
-			break
-		}
-		if payload != nil {
-			payloads = append(payloads, payload)
-		}
-	}
-	return payloads
-}
-
 // recvAndParsePayload receives a packet, parses the 0.7 header,
 // and returns the header and clean payload.
 func (s *Session) recvAndParsePayload(ctx context.Context) (Header, []byte, error) {
@@ -574,23 +555,6 @@ func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) er
 			return nil
 		}
 	}
-}
-
-func (s *Session) recvUntilReadyToEnter(ctx context.Context) error {
-	for range 30 {
-		hdr, payload, err := s.recvAndParsePayload(ctx)
-		if err != nil {
-			return fmt.Errorf("session07: recv waiting for ready_to_enter: %w", err)
-		}
-		if payload == nil {
-			continue
-		}
-		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
-		if packet.ContainsGameMsg(payload, MsgGameSvReadyToEnter, Split) {
-			return nil
-		}
-	}
-	return fmt.Errorf("session07: did not receive SV_READYTOENTER")
 }
 
 // DownloadMap requests the map from the server, reassembles the data,

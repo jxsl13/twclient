@@ -3,7 +3,6 @@ package net6
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -406,26 +405,6 @@ func (s *Session) recvAndAckTimeout(ctx context.Context, timeout time.Duration) 
 	return hdr, payload, nil
 }
 
-// DrainResponses receives up to n packets, updating ack as it goes,
-// and returns all payloads collected. It uses a short read timeout
-// to avoid blocking the caller for too long.
-func (s *Session) DrainResponses(n int) [][]byte {
-	drainTimeout := max(s.conn.ReadTimeout()/10, 5*time.Millisecond)
-	ctx := context.Background()
-
-	var payloads [][]byte
-	for range n {
-		_, payload, err := s.recvAndAckTimeout(ctx, drainTimeout)
-		if err != nil {
-			break
-		}
-		if payload != nil {
-			payloads = append(payloads, payload)
-		}
-	}
-	return payloads
-}
-
 // stripSecurityToken removes the appended 4-byte security token from incoming payload
 // (DDNet appends security tokens to all packets).
 func (s *Session) stripSecurityToken(payload []byte) []byte {
@@ -578,20 +557,6 @@ func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) er
 			return nil
 		}
 	}
-}
-
-// securityTokenFromBE reads a 4-byte big-endian security token.
-func securityTokenFromBE(data []byte) [4]byte {
-	var t [4]byte
-	copy(t[:], data)
-	return t
-}
-
-// securityTokenToBE writes a security token as big-endian uint32.
-func securityTokenToBE(token [4]byte) []byte {
-	buf := make([]byte, 4)
-	binary.BigEndian.PutUint32(buf, binary.BigEndian.Uint32(token[:]))
-	return buf
 }
 
 // MapName returns the current map name (from the last MAP_CHANGE).

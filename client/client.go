@@ -37,11 +37,6 @@ var (
 	ErrSnapshotTimeout = errors.New("client: snapshot timeout")
 )
 
-// inputMinInterval is the minimum interval between INPUT messages when the
-// predicted tick has not advanced. This prevents flooding the server with
-// duplicate inputs while still allowing periodic re-sends.
-const inputMinInterval = 100 * time.Millisecond
-
 // Client is a headless Teeworlds/DDNet client that wraps a protocol session.
 // It handles session creation, login, map download, the background event
 // reader, snap state tracking, and input rate-limiting internally.
@@ -91,11 +86,6 @@ type Client struct {
 	errMu    sync.Mutex
 	lastErr  error
 	lastDisc DisconnectReason // classified last CTRL_CLOSE (V34), guarded by errMu
-
-	// input rate-limiting state — only accessed from SendInput callers
-	inputMu       sync.Mutex
-	lastInputTime time.Time
-	lastInputTick int // last predTick we sent
 
 	// prediction time — tracks predicted game ticks for tick-driven input
 	predTime PredictedTime
@@ -364,11 +354,6 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	c.lastErr = nil
 	c.errMu.Unlock()
 
-	c.inputMu.Lock()
-	c.lastInputTime = time.Time{}
-	c.lastInputTick = 0
-	c.inputMu.Unlock()
-
 	c.predTime.Reset()
 
 	// Create a child context for the reader — cancelled by Close or parent ctx.
@@ -521,7 +506,8 @@ func (c *Client) ResetRace() {
 // SendInput sends a player input to the server. The client uses the
 // PredictedTime tracker to determine the current prediction tick, sending
 // input when a new predicted tick boundary is crossed (~50 times/sec).
-// Between tick boundaries, inputs are throttled to inputMinInterval.
+// Between tick boundaries, NextInput de-duplicates so at most one input is
+// sent per predicted tick.
 func (c *Client) SendInput(input packet.PlayerInput) error {
 	if c.sess == nil {
 		return ErrNotConnected
