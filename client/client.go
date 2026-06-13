@@ -259,6 +259,10 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		lastSnapTime: time.Now(),
 		localCID:     -1,
 	}
+	// Capabilities are sent before MAP_CHANGE and captured synchronously during
+	// Login (before the event reader exists), so seed the client copy from the
+	// session here; later EventServerCapabilities updates refresh it (V47).
+	c.caps = sess.Capabilities()
 	c.mu.Unlock()
 
 	c.errMu.Lock()

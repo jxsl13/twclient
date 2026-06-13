@@ -59,23 +59,47 @@ func (s *Session) processEx(data []byte) {
 	}
 }
 
-// processExCapabilities decodes the DDNet capabilities@ddnet.tw message
-// (Version int, Flags int), stores the result on the session, and emits it.
+// processExCapabilities decodes the DDNet capabilities@ddnet.tw message, stores
+// the result on the session, and emits it (post-login reader path).
 func (s *Session) processExCapabilities(data []byte) {
-	u := packer.NewUnpacker(data)
+	if caps, ok := s.storeCapabilities(data); ok {
+		s.emit(packet.EventServerCapabilities{Caps: caps})
+	}
+}
+
+// storeCapabilities decodes the capabilities body (Version int, Flags int) and
+// stores it on the session without emitting. Used both from the reader and from
+// the synchronous login handshake (where the event channel does not exist yet).
+func (s *Session) storeCapabilities(body []byte) (packet.ServerCapabilities, bool) {
+	u := packer.NewUnpacker(body)
 	version, err := u.GetInt()
 	if err != nil || version <= 0 {
-		return
+		return packet.ServerCapabilities{}, false
 	}
 	flags, err := u.GetInt()
 	if err != nil {
-		return
+		return packet.ServerCapabilities{}, false
 	}
 	caps := packet.ParseServerCapabilities(version, flags)
 	s.capsMu.Lock()
 	s.caps = caps
 	s.capsMu.Unlock()
-	s.emit(packet.EventServerCapabilities{Caps: caps})
+	return caps, true
+}
+
+// maybeParseCapabilities stores capabilities if the given NETMSG_EX payload
+// (16-byte UUID + body) is the capabilities@ddnet.tw message. The DDNet server
+// sends it before MAP_CHANGE, during the synchronous login handshake.
+func (s *Session) maybeParseCapabilities(exPayload []byte) {
+	if len(exPayload) < 16 {
+		return
+	}
+	var uuid [16]byte
+	copy(uuid[:], exPayload[:16])
+	if uuid != uuidCapabilities {
+		return
+	}
+	s.storeCapabilities(exPayload[16:])
 }
 
 // processExTeamsState reads one ddrace-team value per client (raw ints) and

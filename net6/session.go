@@ -470,6 +470,11 @@ func (s *Session) recvUntilMapChange(ctx context.Context) error {
 			continue
 		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
+		// DDNet sends its capabilities (NETMSG_EX) before MAP_CHANGE; capture it
+		// here since the background reader is not running yet (V47).
+		for _, ex := range packet.ExtractAllSysMsgPayloads(payload, MsgSysEx, Split) {
+			s.maybeParseCapabilities(ex)
+		}
 		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
 			if info, err := packet.ParseMapChangePayload(data); err == nil {
 				s.mapMu.Lock()

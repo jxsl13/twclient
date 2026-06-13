@@ -175,6 +175,45 @@ func ExtractSysMsgPayload(payload []byte, targetMsgID int, split int) []byte {
 	return nil
 }
 
+// ExtractAllSysMsgPayloads returns the payloads of every system message in the
+// packet matching targetMsgID (in chunk order). Unlike ExtractSysMsgPayload it
+// does not stop at the first match — needed when a packet carries several
+// NETMSG_EX chunks (e.g. capabilities alongside other extended messages).
+func ExtractAllSysMsgPayloads(payload []byte, targetMsgID int, split int) [][]byte {
+	sizeLowMask := (1 << split) - 1
+	var out [][]byte
+	offset := 0
+	for offset < len(payload) {
+		if offset+2 > len(payload) {
+			break
+		}
+		flagBits := (payload[offset] >> 6) & 0x03
+		vital := flagBits&1 != 0
+		size := (int(payload[offset]&0x3F) << split) | (int(payload[offset+1]) & sizeLowMask)
+		hdrSize := 2
+		if vital {
+			hdrSize = 3
+		}
+		dataStart := offset + hdrSize
+		dataEnd := dataStart + size
+		if dataStart < len(payload) && dataEnd <= len(payload) && size > 0 {
+			u := packer.NewUnpacker(payload[dataStart:dataEnd])
+			if msgRaw, err := u.GetInt(); err == nil {
+				sys := msgRaw&1 != 0
+				if sys && msgRaw>>1 == targetMsgID {
+					if remaining := u.RemainingSize(); remaining > 0 {
+						if raw, err := u.GetRaw(remaining); err == nil {
+							out = append(out, raw)
+						}
+					}
+				}
+			}
+		}
+		offset += hdrSize + size
+	}
+	return out
+}
+
 // ParseMapChangePayload unpacks the MAP_CHANGE message fields:
 // String(map) + Int(crc) + Int(size) + [Int(chunksPerReq) + Int(chunkSize) + Raw(32)(sha256) + String(url)].
 // The bracketed fields are DDNet extensions and may be absent.
