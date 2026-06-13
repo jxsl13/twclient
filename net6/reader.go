@@ -466,6 +466,8 @@ type ddRaceTimeEvent struct {
 	Finish      bool
 }
 
+// ToRaceFinish converts the legacy 0.6 DDRaceTime message into the
+// protocol-unified packet.EventRaceFinish.
 func (e ddRaceTimeEvent) ToRaceFinish() packet.EventRaceFinish {
 	return packet.EventRaceFinish{
 		TimeCentis: e.TimeCentis,
@@ -473,6 +475,8 @@ func (e ddRaceTimeEvent) ToRaceFinish() packet.EventRaceFinish {
 	}
 }
 
+// ToCheckpoint converts the legacy 0.6 DDRaceTime checkpoint diff into the
+// protocol-unified packet.EventCheckpoint.
 func (e ddRaceTimeEvent) ToCheckpoint() packet.EventCheckpoint {
 	return packet.EventCheckpoint{
 		DiffCentis: e.CheckCentis,

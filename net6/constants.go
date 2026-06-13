@@ -2,7 +2,10 @@
 package net6
 
 const (
+	// MaxClients is the maximum player slots a 0.6 server exposes.
 	MaxClients = 16
+	// NetVersion is the 0.6 network version string sent in NETMSG_INFO; it must
+	// match the server's expected version (DDNet `GAME_NETVERSION`).
 	NetVersion = "0.6 626fce9a778df4d4"
 
 	// Split is the chunk header split parameter for 0.6.
@@ -30,7 +33,9 @@ const (
 var (
 	// DDNetVersion is the DDNet client version we advertise.
 	// 19070 = DDNet 19.0.7
-	DDNetVersion    = 19070
+	DDNetVersion = 19070
+	// DDNetVersionStr is the human-readable client version sent in the DDNet
+	// CLIENTVER handshake message.
 	DDNetVersionStr = "DDNet 19.0.7 (tw-protocol/go)"
 )
 
