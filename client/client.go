@@ -101,6 +101,9 @@ type Client struct {
 
 	// events accumulated since the last TickState was built (drained per tick)
 	tickEvents []packet.Event
+
+	// pluggable consumer (UI / ML), driven per tick (V20)
+	frontend Frontend
 }
 
 // MapView returns a queryable view of the complete local map, or nil if the
