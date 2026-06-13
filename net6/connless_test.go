@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/jxsl13/twclient/packer"
 	"github.com/jxsl13/twclient/packet"
 )
 
@@ -35,5 +36,40 @@ func TestConnlessInfoPayload(t *testing.T) {
 	bad := append(bytes.Repeat([]byte{0xff}, 6), packet.ServerBrowseGetInfo...) // wrong magic
 	if _, ok := ConnlessInfoPayload(bad); ok {
 		t.Error("non-inf3 datagram should be rejected")
+	}
+}
+
+// V60: 0.6 info body (decimal-string ints) decodes to packet.ServerInfo incl.
+// the player list, password flag, and derived counts.
+func TestParseInfoResponse(t *testing.T) {
+	var b []byte
+	b = append(b, packer.PackStr("12")...)        // token
+	b = append(b, packer.PackStr("0.6.5")...)     // version
+	b = append(b, packer.PackStr("My Server")...) // name
+	b = append(b, packer.PackStr("dm1")...)       // map
+	b = append(b, packer.PackStr("DM")...)        // gametype
+	b = append(b, packer.PackStr("1")...)         // flags (password)
+	b = append(b, packer.PackStr("2")...)         // num players
+	b = append(b, packer.PackStr("16")...)        // max players
+	b = append(b, packer.PackStr("3")...)         // num clients
+	b = append(b, packer.PackStr("16")...)        // max clients
+	b = append(b, packer.PackStr("alice")...)
+	b = append(b, packer.PackStr("ACL")...)
+	b = append(b, packer.PackStr("-1")...) // country
+	b = append(b, packer.PackStr("10")...) // score
+	b = append(b, packer.PackStr("1")...)  // is player
+
+	info, err := ParseInfoResponse(b)
+	if err != nil {
+		t.Fatalf("ParseInfoResponse: %v", err)
+	}
+	if info.Name != "My Server" || info.MapName != "dm1" || info.GameType != "DM" || !info.Passworded {
+		t.Errorf("basics wrong: %+v", info)
+	}
+	if info.NumPlayers != 2 || info.MaxPlayers != 16 || info.NumClients != 3 || info.MaxClients != 16 {
+		t.Errorf("counts wrong: %+v", info)
+	}
+	if len(info.Clients) != 1 || info.Clients[0].Name != "alice" || info.Clients[0].Country != -1 || !info.Clients[0].IsPlayer {
+		t.Errorf("client wrong: %+v", info.Clients)
 	}
 }

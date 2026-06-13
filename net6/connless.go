@@ -2,7 +2,11 @@ package net6
 
 import (
 	"bytes"
+	"fmt"
+	"strconv"
+	"strings"
 
+	"github.com/jxsl13/twclient/packer"
 	"github.com/jxsl13/twclient/packet"
 )
 
@@ -36,4 +40,60 @@ func ConnlessInfoPayload(datagram []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return body[len(packet.ServerBrowseInfo):], true
+}
+
+// ParseInfoResponse decodes a 0.6 connless info body (the bytes after the
+// SERVERBROWSE_INFO magic, from ConnlessInfoPayload). 0.6 encodes every field
+// as a NUL-terminated string; numbers are decimal strings (V60).
+func ParseInfoResponse(body []byte) (packet.ServerInfo, error) {
+	u := packer.NewUnpacker(body)
+	// token, version (skipped)
+	if _, err := u.GetString(); err != nil {
+		return packet.ServerInfo{}, fmt.Errorf("net6: info token: %w", err)
+	}
+	if _, err := u.GetString(); err != nil {
+		return packet.ServerInfo{}, fmt.Errorf("net6: info version: %w", err)
+	}
+	name, err := u.GetString()
+	if err != nil {
+		return packet.ServerInfo{}, fmt.Errorf("net6: info name: %w", err)
+	}
+	mapName, _ := u.GetString()
+	gameType, _ := u.GetString()
+	flags := decStr(u)
+	info := packet.ServerInfo{
+		Name:       name,
+		GameType:   gameType,
+		MapName:    mapName,
+		Passworded: flags&packet.ServerInfoFlagPassword != 0,
+		NumPlayers: decStr(u),
+		MaxPlayers: decStr(u),
+		NumClients: decStr(u),
+		MaxClients: decStr(u),
+	}
+	for {
+		cname, err := u.GetString()
+		if err != nil {
+			break // end of client list
+		}
+		cclan, _ := u.GetString()
+		info.Clients = append(info.Clients, packet.PlayerInfo{
+			Name:     cname,
+			Clan:     cclan,
+			Country:  decStr(u),
+			Score:    decStr(u),
+			IsPlayer: decStr(u) != 0, // 0.6: 1 = player
+		})
+	}
+	return info, nil
+}
+
+// decStr reads one decimal-string integer from a 0.6 info body (0 on error/EOF).
+func decStr(u *packer.Unpacker) int {
+	s, err := u.GetString()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	return n
 }
