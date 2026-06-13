@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jxsl13/twclient/net6"
@@ -69,6 +70,16 @@ type Client struct {
 	// event processing goroutine — cancelled by Close or parent context
 	readerCancel context.CancelFunc
 	doneCh       chan struct{}
+
+	// automatic reconnection (T26). connectCtx is the context passed to Connect;
+	// cancelling it gracefully stops reconnect retries. closed is shut by Close
+	// to abort an in-progress backoff wait; closing marks a deliberate teardown
+	// so a server drop during shutdown is not auto-reconnected (V40).
+	reconnectPolicy ReconnectPolicy
+	connectCtx      context.Context
+	closed          chan struct{}
+	closeOnce       sync.Once
+	closing         atomic.Bool
 
 	// disconnection error — set by event loop, read by Err()
 	errMu    sync.Mutex
@@ -210,21 +221,36 @@ func WithTimeoutCode(code string) Option {
 	return func(c *Client) { c.timeoutCode = code }
 }
 
+// WithReconnectPolicy sets the automatic reconnection policy (T26). By default
+// auto-reconnect is enabled with DefaultReconnectPolicy (exponential backoff,
+// unlimited attempts, tee resume). Pass NewReconnectPolicy(...) to customize.
+func WithReconnectPolicy(p ReconnectPolicy) Option {
+	return func(c *Client) { c.reconnectPolicy = p }
+}
+
+// WithoutAutoReconnect disables automatic reconnection; a server drop then
+// surfaces via Err()/LastDisconnect without the client retrying.
+func WithoutAutoReconnect() Option {
+	return func(c *Client) { c.reconnectPolicy.enabled = false }
+}
+
 // New creates a new headless client for the given server address.
-// By default it uses protocol version 0.6, discards logs, and creates
-// its own map cache. Use options to customize.
+// By default it uses protocol version 0.6, discards logs, creates its own map
+// cache, and auto-reconnects with exponential backoff. Use options to customize.
 func New(address string, opts ...Option) *Client {
 	c := &Client{
-		address:  address,
-		name:     packet.DefaultName,
-		clan:     "",
-		skin:     packet.DefaultSkin,
-		country:  packet.DefaultCountry,
-		version:  packet.Version06,
-		mapCache: packet.NewMapCache(),
-		log:      slog.New(slog.DiscardHandler),
-		predTun:  physics.DefaultTuning(),
-		predCfg:  physics.DefaultWorldConfig(),
+		address:         address,
+		name:            packet.DefaultName,
+		clan:            "",
+		skin:            packet.DefaultSkin,
+		country:         packet.DefaultCountry,
+		version:         packet.Version06,
+		mapCache:        packet.NewMapCache(),
+		log:             slog.New(slog.DiscardHandler),
+		predTun:         physics.DefaultTuning(),
+		predCfg:         physics.DefaultWorldConfig(),
+		reconnectPolicy: DefaultReconnectPolicy(),
+		closed:          make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -243,6 +269,12 @@ func New(address string, opts ...Option) *Client {
 // cancelling it stops the background reader and unblocks all I/O.
 // After Connect returns, game state is accessible via Character(), RaceTime(), etc.
 func (c *Client) Connect(ctx context.Context) (err error) {
+	// Remember the caller's context so auto-reconnect can bind to it: cancelling
+	// it gracefully aborts reconnect retries (T26, V39).
+	c.mu.Lock()
+	c.connectCtx = ctx
+	c.mu.Unlock()
+
 	sess, err := c.newSession()
 	if err != nil {
 		return fmt.Errorf("client: dial %s: %w", c.address, err)
@@ -309,8 +341,19 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 }
 
 // Close stops the event processor, disconnects from the server, and
-// resets state. Safe to call multiple times.
+// resets state. Safe to call multiple times. A deliberate Close stops the event
+// loop, marks the client as closing so a concurrent server drop is not
+// auto-reconnected, aborts any in-progress reconnect backoff, and sends a clean
+// CTRL_CLOSE disconnect to the server (V40).
 func (c *Client) Close() error {
+	c.closing.Store(true)
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.closeSession()
+}
+
+// closeSession tears down the current session and event loop without marking
+// the client closed. Used by both Close and the reconnect path.
+func (c *Client) closeSession() error {
 	if c.readerCancel != nil {
 		c.readerCancel()
 		<-c.doneCh // wait for event loop to finish
@@ -334,7 +377,7 @@ func (c *Client) Close() error {
 // force a fresh tee instead of a resume. The new context governs the new
 // connection's lifetime.
 func (c *Client) Reconnect(ctx context.Context) error {
-	c.Close()
+	c.closeSession()
 	return c.Connect(ctx)
 }
 
@@ -512,6 +555,9 @@ func (c *Client) eventLoop(ctx context.Context) {
 		case ev, ok := <-ch:
 			if !ok {
 				c.setErr(ErrServerClosed)
+				// Server-initiated drop (channel closed, not ctx cancel):
+				// start auto-reconnect unless this is a deliberate teardown.
+				c.maybeAutoReconnect()
 				return
 			}
 			c.handleEvent(ev)

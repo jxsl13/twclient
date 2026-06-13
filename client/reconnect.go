@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/rand"
 	"regexp"
 	"strconv"
@@ -9,6 +10,60 @@ import (
 
 	"github.com/jxsl13/twclient/packet"
 )
+
+// maybeAutoReconnect starts the reconnect loop after a server-initiated drop,
+// unless auto-reconnect is disabled, the client is being torn down, or the
+// caller's context is already cancelled (T26, V40). Called from the event loop
+// when the session's event channel closes.
+func (c *Client) maybeAutoReconnect() {
+	c.mu.RLock()
+	pol := c.reconnectPolicy
+	ctx := c.connectCtx
+	c.mu.RUnlock()
+
+	if !pol.enabled || ctx == nil {
+		return
+	}
+	if c.closing.Load() || ctx.Err() != nil {
+		return
+	}
+	go c.reconnectLoop(ctx, pol)
+}
+
+// reconnectLoop retries Connect on the policy's backoff schedule until it
+// succeeds, the attempt budget is exhausted, the caller's context is cancelled,
+// or the client is closed (T26). Every wait selects on ctx.Done and the close
+// signal, so a graceful shutdown aborts promptly (V39). Banned servers simply
+// keep failing and are retried on the same schedule — each attempt doubles as
+// an unban poll (V35).
+func (c *Client) reconnectLoop(ctx context.Context, pol ReconnectPolicy) {
+	pol.backoff.Reset()
+	if !pol.resumeWithTimeout {
+		c.ResetTimeoutCode()
+	}
+	for attempt := 0; pol.maxAttempts == 0 || attempt < pol.maxAttempts; attempt++ {
+		timer := time.NewTimer(pol.backoff.Next())
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-c.closed:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if c.closing.Load() || ctx.Err() != nil {
+			return
+		}
+		if err := c.Reconnect(ctx); err != nil {
+			c.log.Warn("auto-reconnect attempt failed", "attempt", attempt+1, "error", err)
+			continue
+		}
+		c.log.Info("auto-reconnected", "attempt", attempt+1)
+		return
+	}
+	c.log.Warn("auto-reconnect gave up", "max_attempts", pol.maxAttempts)
+}
 
 // ResetTimeoutCode replaces the client's timeout code. With no argument (or an
 // empty string) it generates a new random code; pass a string to set a specific
