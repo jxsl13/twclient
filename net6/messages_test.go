@@ -19,7 +19,7 @@ func TestSysInfoCarriesPassword(t *testing.T) {
 // sysMsgID decodes the leading system message id of a chunk payload.
 func sysMsgID(t *testing.T, data []byte) (id int, sys bool) {
 	t.Helper()
-	raw, err := packer.NewUnpacker(data).GetInt()
+	raw, err := packer.NewUnpacker(data).NextInt()
 	if err != nil {
 		t.Fatalf("decode msg id: %v", err)
 	}

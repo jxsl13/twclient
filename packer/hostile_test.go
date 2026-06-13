@@ -15,10 +15,10 @@ func TestHostileInputNoPanic(t *testing.T) {
 	}
 	for _, b := range garbage {
 		u := NewUnpacker(b)
-		_, _ = u.GetInt()        // must not panic
-		_, _ = u.GetString()     // must not panic
-		_, _ = u.GetRaw(1 << 20) // oversized request → error, not panic/OOM read
-		_, _ = UnpackInt(b)      // must not panic
+		_, _ = u.NextInt()        // must not panic
+		_, _ = u.NextString()     // must not panic
+		_, _ = u.NextRaw(1 << 20) // oversized request → error, not panic/OOM read
+		_, _ = UnpackInt(b)       // must not panic
 	}
 
 	// Pack side: extreme values must not panic.

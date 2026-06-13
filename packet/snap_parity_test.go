@@ -17,15 +17,15 @@ func applyDeltaLinear(base *Snapshot, tick int, data []byte, itemSizeFn func(int
 		return &Snapshot{Tick: tick, Items: append([]SnapItem(nil), base.Items...)}, nil
 	}
 	u := packer.NewUnpacker(data)
-	numDeleted, err := u.GetInt()
+	numDeleted, err := u.NextInt()
 	if err != nil {
 		return nil, err
 	}
-	numUpdated, err := u.GetInt()
+	numUpdated, err := u.NextInt()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := u.GetInt(); err != nil {
+	if _, err := u.NextInt(); err != nil {
 		return nil, err
 	}
 	baseMap := map[itemKey][]int{}
@@ -34,7 +34,7 @@ func applyDeltaLinear(base *Snapshot, tick int, data []byte, itemSizeFn func(int
 	}
 	deleted := map[itemKey]bool{}
 	for range numDeleted {
-		key, err := u.GetInt()
+		key, err := u.NextInt()
 		if err != nil {
 			return nil, err
 		}
@@ -47,11 +47,11 @@ func applyDeltaLinear(base *Snapshot, tick int, data []byte, itemSizeFn func(int
 		}
 	}
 	for range numUpdated {
-		typeID, err := u.GetInt()
+		typeID, err := u.NextInt()
 		if err != nil {
 			return nil, err
 		}
-		id, err := u.GetInt()
+		id, err := u.NextInt()
 		if err != nil {
 			return nil, err
 		}
@@ -60,13 +60,13 @@ func applyDeltaLinear(base *Snapshot, tick int, data []byte, itemSizeFn func(int
 			size = itemSizeFn(typeID)
 		}
 		if size < 0 {
-			if size, err = u.GetInt(); err != nil {
+			if size, err = u.NextInt(); err != nil {
 				return nil, err
 			}
 		}
 		df := make([]int, size)
 		for f := 0; f < size; f++ {
-			v, err := u.GetInt()
+			v, err := u.NextInt()
 			if err != nil {
 				break
 			}

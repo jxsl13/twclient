@@ -34,7 +34,7 @@ func (s *stubSession) EventCh() <-chan packet.Event                    { return 
 func (s *stubSession) DownloadMap(context.Context) (*twmap.Map, error) { return nil, nil }
 func (s *stubSession) Map() *twmap.Map                                 { return nil }
 func (s *stubSession) MapName() string                                 { return "" }
-func (s *stubSession) GetMapInfo() packet.MapInfo                      { return packet.MapInfo{} }
+func (s *stubSession) MapInfo() packet.MapInfo                         { return packet.MapInfo{} }
 func (s *stubSession) SetMap(*twmap.Map, packet.MapInfo)               {}
 func (s *stubSession) Poll() (packet.Event, error)                     { return nil, nil }
 func (s *stubSession) SendInput(int, int, int, []byte) error           { s.lastCall = "input"; return nil }

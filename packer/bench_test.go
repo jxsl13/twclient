@@ -28,7 +28,7 @@ func BenchmarkUnpackerReset(b *testing.B) {
 	for b.Loop() {
 		u.Reset(buf)
 		for u.RemainingSize() > 0 {
-			if _, err := u.GetInt(); err != nil {
+			if _, err := u.NextInt(); err != nil {
 				break
 			}
 		}
@@ -43,13 +43,13 @@ func BenchmarkUnpackInt(b *testing.B) {
 	}
 }
 
-func BenchmarkGetStringSanitized(b *testing.B) {
+func BenchmarkNextStringSanitized(b *testing.B) {
 	data := append([]byte("a moderately long player chat message hello world"), 0)
 	u := NewUnpacker(data)
 	b.ReportAllocs()
 	for b.Loop() {
 		u.Reset(data)
-		if _, err := u.GetString(); err != nil {
+		if _, err := u.NextString(); err != nil {
 			b.Fatal(err)
 		}
 	}

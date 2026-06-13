@@ -48,18 +48,18 @@ func ConnlessInfoPayload(datagram []byte) ([]byte, bool) {
 func ParseInfoResponse(body []byte) (packet.ServerInfo, error) {
 	u := packer.NewUnpacker(body)
 	// token, version (skipped)
-	if _, err := u.GetString(); err != nil {
+	if _, err := u.NextString(); err != nil {
 		return packet.ServerInfo{}, fmt.Errorf("net6: info token: %w", err)
 	}
-	if _, err := u.GetString(); err != nil {
+	if _, err := u.NextString(); err != nil {
 		return packet.ServerInfo{}, fmt.Errorf("net6: info version: %w", err)
 	}
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return packet.ServerInfo{}, fmt.Errorf("net6: info name: %w", err)
 	}
-	mapName, _ := u.GetString()
-	gameType, _ := u.GetString()
+	mapName, _ := u.NextString()
+	gameType, _ := u.NextString()
 	flags := decStr(u)
 	info := packet.ServerInfo{
 		Name:       name,
@@ -72,11 +72,11 @@ func ParseInfoResponse(body []byte) (packet.ServerInfo, error) {
 		MaxClients: decStr(u),
 	}
 	for {
-		cname, err := u.GetString()
+		cname, err := u.NextString()
 		if err != nil {
 			break // end of client list
 		}
-		cclan, _ := u.GetString()
+		cclan, _ := u.NextString()
 		info.Clients = append(info.Clients, packet.PlayerInfo{
 			Name:     cname,
 			Clan:     cclan,
@@ -90,7 +90,7 @@ func ParseInfoResponse(body []byte) (packet.ServerInfo, error) {
 
 // decStr reads one decimal-string integer from a 0.6 info body (0 on error/EOF).
 func decStr(u *packer.Unpacker) int {
-	s, err := u.GetString()
+	s, err := u.NextString()
 	if err != nil {
 		return 0
 	}

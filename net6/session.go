@@ -601,8 +601,8 @@ func (s *Session) MapName() string {
 	return s.mapInfo.Name
 }
 
-// GetMapInfo returns the current map metadata.
-func (s *Session) GetMapInfo() packet.MapInfo {
+// MapInfo returns the current map metadata.
+func (s *Session) MapInfo() packet.MapInfo {
 	s.mapMu.RLock()
 	defer s.mapMu.RUnlock()
 	return s.mapInfo
@@ -625,7 +625,7 @@ func (s *Session) Map() *twmap.Map {
 //
 // MAP_DATA format: Int(last) + Int(crc) + Int(chunk) + Int(chunkSize) + Raw(data)
 func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
-	info := s.GetMapInfo()
+	info := s.MapInfo()
 	if info.Name == "" {
 		return nil, fmt.Errorf("session06: no map info (call Login or recvUntilMapChange first)")
 	}
@@ -714,23 +714,23 @@ func (s *Session) recvMapDataChunk(ctx context.Context) (int, []byte, error) {
 		}
 
 		u := packer.NewUnpacker(data)
-		last, err := u.GetInt()
+		last, err := u.NextInt()
 		if err != nil {
 			return 0, nil, fmt.Errorf("map_data: last: %w", err)
 		}
 		// crc (skip)
-		if _, err := u.GetInt(); err != nil {
+		if _, err := u.NextInt(); err != nil {
 			return 0, nil, fmt.Errorf("map_data: crc: %w", err)
 		}
 		// chunk index (skip)
-		if _, err := u.GetInt(); err != nil {
+		if _, err := u.NextInt(); err != nil {
 			return 0, nil, fmt.Errorf("map_data: chunk: %w", err)
 		}
-		chunkSize, err := u.GetInt()
+		chunkSize, err := u.NextInt()
 		if err != nil {
 			return 0, nil, fmt.Errorf("map_data: chunkSize: %w", err)
 		}
-		chunkData, err := u.GetRaw(chunkSize)
+		chunkData, err := u.NextRaw(chunkSize)
 		if err != nil {
 			return 0, nil, fmt.Errorf("map_data: data (%d bytes): %w", chunkSize, err)
 		}

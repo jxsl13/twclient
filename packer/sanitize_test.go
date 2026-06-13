@@ -11,7 +11,7 @@ func getStringSanitizedRef(u *Unpacker, flags int) (string, error) {
 	var buf []byte
 	skipping := flags&SanitizeSkipWhitespaces != 0
 	for {
-		b, err := u.GetByte()
+		b, err := u.NextByte()
 		if err != nil {
 			return "", err
 		}
@@ -38,7 +38,7 @@ func getStringSanitizedRef(u *Unpacker, flags int) (string, error) {
 	return string(buf), nil
 }
 
-func TestGetStringSanitizedParity(t *testing.T) {
+func TestNextStringSanitizedParity(t *testing.T) {
 	rng := rand.New(rand.NewPCG(7, 11))
 	flagSets := []int{
 		0,
@@ -68,7 +68,7 @@ func TestGetStringSanitizedParity(t *testing.T) {
 		data := append(append([]byte(nil), raw...), 0)
 		flags := flagSets[rng.IntN(len(flagSets))]
 
-		got, errG := NewUnpacker(data).GetStringSanitized(flags)
+		got, errG := NewUnpacker(data).NextStringSanitized(flags)
 		want, errW := getStringSanitizedRef(NewUnpacker(data), flags)
 		if (errG == nil) != (errW == nil) {
 			t.Fatalf("iter %d: err mismatch g=%v w=%v", iter, errG, errW)
@@ -79,8 +79,8 @@ func TestGetStringSanitizedParity(t *testing.T) {
 	}
 }
 
-func TestGetStringUnterminated(t *testing.T) {
-	if _, err := NewUnpacker([]byte("no terminator")).GetStringSanitized(SanitizeDefault); err == nil {
+func TestNextStringUnterminated(t *testing.T) {
+	if _, err := NewUnpacker([]byte("no terminator")).NextStringSanitized(SanitizeDefault); err == nil {
 		t.Fatal("expected error on unterminated string")
 	}
 }

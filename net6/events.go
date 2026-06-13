@@ -16,15 +16,15 @@ func (s *Session) emit(ev packet.Event) {
 // whisper events by m_Team and m_ClientId (V15).
 func (s *Session) processChat(data []byte) {
 	u := packer.NewUnpacker(data)
-	team, err := u.GetInt()
+	team, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	msg, err := u.GetString()
+	msg, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -43,7 +43,7 @@ func (s *Session) processChat(data []byte) {
 
 func (s *Session) processBroadcast(data []byte) {
 	u := packer.NewUnpacker(data)
-	text, err := u.GetString()
+	text, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -52,7 +52,7 @@ func (s *Session) processBroadcast(data []byte) {
 
 func (s *Session) processMotd(data []byte) {
 	u := packer.NewUnpacker(data)
-	text, err := u.GetString()
+	text, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -61,19 +61,19 @@ func (s *Session) processMotd(data []byte) {
 
 func (s *Session) processKillMsg(data []byte) {
 	u := packer.NewUnpacker(data)
-	killer, err := u.GetInt()
+	killer, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	victim, err := u.GetInt()
+	victim, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	weapon, err := u.GetInt()
+	weapon, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	modeSpecial, err := u.GetInt()
+	modeSpecial, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -87,7 +87,7 @@ func (s *Session) processKillMsg(data []byte) {
 
 func (s *Session) processSoundGlobal(data []byte) {
 	u := packer.NewUnpacker(data)
-	soundID, err := u.GetInt()
+	soundID, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -99,7 +99,7 @@ func (s *Session) processTuneParams(data []byte) {
 	u := packer.NewUnpacker(data)
 	var raw []int32
 	for {
-		v, err := u.GetInt()
+		v, err := u.NextInt()
 		if err != nil {
 			break
 		}
@@ -110,7 +110,7 @@ func (s *Session) processTuneParams(data []byte) {
 
 func (s *Session) processWeaponPickup(data []byte) {
 	u := packer.NewUnpacker(data)
-	weapon, err := u.GetInt()
+	weapon, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -119,11 +119,11 @@ func (s *Session) processWeaponPickup(data []byte) {
 
 func (s *Session) processEmoticon(data []byte) {
 	u := packer.NewUnpacker(data)
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	emoticon, err := u.GetInt()
+	emoticon, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -132,15 +132,15 @@ func (s *Session) processEmoticon(data []byte) {
 
 func (s *Session) processVoteSet(data []byte) {
 	u := packer.NewUnpacker(data)
-	timeout, err := u.GetInt()
+	timeout, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	desc, err := u.GetString()
+	desc, err := u.NextString()
 	if err != nil {
 		return
 	}
-	reason, err := u.GetString()
+	reason, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -149,19 +149,19 @@ func (s *Session) processVoteSet(data []byte) {
 
 func (s *Session) processVoteStatus(data []byte) {
 	u := packer.NewUnpacker(data)
-	yes, err := u.GetInt()
+	yes, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	no, err := u.GetInt()
+	no, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	pass, err := u.GetInt()
+	pass, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	total, err := u.GetInt()
+	total, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -170,7 +170,7 @@ func (s *Session) processVoteStatus(data []byte) {
 
 func (s *Session) processVoteOptionAdd(data []byte) {
 	u := packer.NewUnpacker(data)
-	desc, err := u.GetString()
+	desc, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -179,7 +179,7 @@ func (s *Session) processVoteOptionAdd(data []byte) {
 
 func (s *Session) processVoteOptionRemove(data []byte) {
 	u := packer.NewUnpacker(data)
-	desc, err := u.GetString()
+	desc, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -194,12 +194,12 @@ func (s *Session) processVoteClearOptions() {
 // event per description.
 func (s *Session) processVoteOptionListAdd(data []byte) {
 	u := packer.NewUnpacker(data)
-	n, err := u.GetInt()
+	n, err := u.NextInt()
 	if err != nil {
 		return
 	}
 	for range n {
-		desc, err := u.GetString()
+		desc, err := u.NextString()
 		if err != nil {
 			return
 		}
@@ -211,7 +211,7 @@ func (s *Session) processVoteOptionListAdd(data []byte) {
 
 func (s *Session) processRconLine(data []byte) {
 	u := packer.NewUnpacker(data)
-	line, err := u.GetString()
+	line, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -222,7 +222,7 @@ func (s *Session) processRconLine(data []byte) {
 // optional command-list flag. Level is reported as the authed value.
 func (s *Session) processRconAuthStatus(data []byte) {
 	u := packer.NewUnpacker(data)
-	authed, err := u.GetInt()
+	authed, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -231,15 +231,15 @@ func (s *Session) processRconAuthStatus(data []byte) {
 
 func (s *Session) processRconCmdAdd(data []byte) {
 	u := packer.NewUnpacker(data)
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return
 	}
-	help, err := u.GetString()
+	help, err := u.NextString()
 	if err != nil {
 		return
 	}
-	params, err := u.GetString()
+	params, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -248,7 +248,7 @@ func (s *Session) processRconCmdAdd(data []byte) {
 
 func (s *Session) processRconCmdRem(data []byte) {
 	u := packer.NewUnpacker(data)
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -257,7 +257,7 @@ func (s *Session) processRconCmdRem(data []byte) {
 
 func (s *Session) processServerError(data []byte) {
 	u := packer.NewUnpacker(data)
-	msg, err := u.GetString()
+	msg, err := u.NextString()
 	if err != nil {
 		return
 	}

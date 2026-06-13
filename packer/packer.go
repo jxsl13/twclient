@@ -52,33 +52,33 @@ func (u *Unpacker) Rest() []byte {
 	return rest
 }
 
-// GetByte consumes and returns a single byte.
-func (u *Unpacker) GetByte() (byte, error) {
+// NextByte consumes and returns a single byte.
+func (u *Unpacker) NextByte() (byte, error) {
 	if u.RemainingSize() < 1 {
-		return 0, errors.New("packer: not enough data for GetByte")
+		return 0, errors.New("packer: not enough data for NextByte")
 	}
 	b := u.data[u.idx]
 	u.idx++
 	return b, nil
 }
 
-// GetRaw consumes and returns size bytes.
-func (u *Unpacker) GetRaw(size int) ([]byte, error) {
+// NextRaw consumes and returns size bytes.
+func (u *Unpacker) NextRaw(size int) ([]byte, error) {
 	if size < 0 {
-		return nil, fmt.Errorf("packer: GetRaw negative size %d", size)
+		return nil, fmt.Errorf("packer: NextRaw negative size %d", size)
 	}
 	if u.idx+size > len(u.data) {
-		return nil, fmt.Errorf("packer: GetRaw needs %d bytes, only %d available", size, u.RemainingSize())
+		return nil, fmt.Errorf("packer: NextRaw needs %d bytes, only %d available", size, u.RemainingSize())
 	}
 	b := u.data[u.idx : u.idx+size]
 	u.idx += size
 	return b, nil
 }
 
-// GetInt unpacks a Teeworlds variable-length integer using the varint library.
-func (u *Unpacker) GetInt() (int, error) {
+// NextInt unpacks a Teeworlds variable-length integer using the varint library.
+func (u *Unpacker) NextInt() (int, error) {
 	if u.RemainingSize() < 1 {
-		return 0, errors.New("packer: not enough data for GetInt")
+		return 0, errors.New("packer: not enough data for NextInt")
 	}
 	val, n := varint.Varint(u.data[u.idx:])
 	if n <= 0 {
@@ -88,9 +88,9 @@ func (u *Unpacker) GetInt() (int, error) {
 	return val, nil
 }
 
-// GetString unpacks a null-terminated string with basic sanitization.
-func (u *Unpacker) GetString() (string, error) {
-	return u.GetStringSanitized(SanitizeDefault)
+// NextString unpacks a null-terminated string with basic sanitization.
+func (u *Unpacker) NextString() (string, error) {
+	return u.NextStringSanitized(SanitizeDefault)
 }
 
 // Sanitization flags.
@@ -100,8 +100,8 @@ const (
 	SanitizeSkipWhitespaces = 4
 )
 
-// GetStringSanitized unpacks a null-terminated string with the given sanitization.
-func (u *Unpacker) GetStringSanitized(flags int) (string, error) {
+// NextStringSanitized unpacks a null-terminated string with the given sanitization.
+func (u *Unpacker) NextStringSanitized(flags int) (string, error) {
 	rem := u.data[u.idx:]
 	nul := bytes.IndexByte(rem, 0)
 	if nul < 0 {
@@ -155,10 +155,10 @@ func (u *Unpacker) GetStringSanitized(flags int) (string, error) {
 	return string(buf), nil
 }
 
-// GetMsgAndSys unpacks a message ID and its system flag.
+// NextMsgAndSys unpacks a message ID and its system flag.
 // The last bit of the packed int determines system (1) vs game (0).
-func (u *Unpacker) GetMsgAndSys() (msgID int, system bool, err error) {
-	raw, err := u.GetInt()
+func (u *Unpacker) NextMsgAndSys() (msgID int, system bool, err error) {
+	raw, err := u.NextInt()
 	if err != nil {
 		return 0, false, err
 	}

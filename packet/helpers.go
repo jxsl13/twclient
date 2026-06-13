@@ -156,14 +156,14 @@ func ExtractSysMsgPayload(payload []byte, targetMsgID int, split int) []byte {
 		dataEnd := dataStart + size
 		if dataStart < len(payload) && dataEnd <= len(payload) && size > 0 {
 			u := packer.NewUnpacker(payload[dataStart:dataEnd])
-			msgRaw, err := u.GetInt()
+			msgRaw, err := u.NextInt()
 			if err == nil {
 				sys := msgRaw&1 != 0
 				msgIDDecoded := msgRaw >> 1
 				if sys && msgIDDecoded == targetMsgID {
 					remaining := u.RemainingSize()
 					if remaining > 0 {
-						raw, _ := u.GetRaw(remaining)
+						raw, _ := u.NextRaw(remaining)
 						return raw
 					}
 					return []byte{}
@@ -198,11 +198,11 @@ func ExtractAllSysMsgPayloads(payload []byte, targetMsgID int, split int) [][]by
 		dataEnd := dataStart + size
 		if dataStart < len(payload) && dataEnd <= len(payload) && size > 0 {
 			u := packer.NewUnpacker(payload[dataStart:dataEnd])
-			if msgRaw, err := u.GetInt(); err == nil {
+			if msgRaw, err := u.NextInt(); err == nil {
 				sys := msgRaw&1 != 0
 				if sys && msgRaw>>1 == targetMsgID {
 					if remaining := u.RemainingSize(); remaining > 0 {
-						if raw, err := u.GetRaw(remaining); err == nil {
+						if raw, err := u.NextRaw(remaining); err == nil {
 							out = append(out, raw)
 						}
 					}
@@ -219,23 +219,23 @@ func ExtractAllSysMsgPayloads(payload []byte, targetMsgID int, split int) [][]by
 // The bracketed fields are DDNet extensions and may be absent.
 func ParseMapChangePayload(data []byte) (MapInfo, error) {
 	u := packer.NewUnpacker(data)
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return MapInfo{}, fmt.Errorf("map_change: name: %w", err)
 	}
-	crc, err := u.GetInt()
+	crc, err := u.NextInt()
 	if err != nil {
 		return MapInfo{}, fmt.Errorf("map_change: crc: %w", err)
 	}
-	size, err := u.GetInt()
+	size, err := u.NextInt()
 	if err != nil {
 		return MapInfo{}, fmt.Errorf("map_change: size: %w", err)
 	}
 	info := MapInfo{Name: name, CRC: crc, Size: size}
 	// DDNet extensions: chunksPerRequest, chunkSize, sha256, url
-	if _, err := u.GetInt(); err == nil { // chunksPerRequest
-		if _, err := u.GetInt(); err == nil { // chunkSize
-			if raw, err := u.GetRaw(32); err == nil {
+	if _, err := u.NextInt(); err == nil { // chunksPerRequest
+		if _, err := u.NextInt(); err == nil { // chunkSize
+			if raw, err := u.NextRaw(32); err == nil {
 				copy(info.Sha256[:], raw)
 			}
 		}

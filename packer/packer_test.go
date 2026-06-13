@@ -42,9 +42,9 @@ func TestPackUnpackIntViaUnpacker(t *testing.T) {
 	for _, v := range vals {
 		packed := PackInt(v)
 		u := NewUnpacker(packed)
-		got, err := u.GetInt()
+		got, err := u.NextInt()
 		if err != nil {
-			t.Fatalf("GetInt error for %d: %v", v, err)
+			t.Fatalf("NextInt error for %d: %v", v, err)
 		}
 		if got != v {
 			t.Errorf("expected %d, got %d", v, got)
@@ -57,9 +57,9 @@ func TestPackUnpackString(t *testing.T) {
 	s := "hello world"
 	packed := PackStr(s)
 	u := NewUnpacker(packed)
-	got, err := u.GetString()
+	got, err := u.NextString()
 	if err != nil {
-		t.Fatalf("GetString error: %v", err)
+		t.Fatalf("NextString error: %v", err)
 	}
 	if got != s {
 		t.Errorf("expected %q, got %q", s, got)
@@ -71,9 +71,9 @@ func TestMsgAndSys(t *testing.T) {
 	// system message with ID 5
 	packed := PackMsgID(5, true)
 	u := NewUnpacker(packed)
-	id, sys, err := u.GetMsgAndSys()
+	id, sys, err := u.NextMsgAndSys()
 	if err != nil {
-		t.Fatalf("GetMsgAndSys error: %v", err)
+		t.Fatalf("NextMsgAndSys error: %v", err)
 	}
 	if id != 5 || !sys {
 		t.Errorf("expected id=5 sys=true, got id=%d sys=%v", id, sys)
@@ -82,22 +82,22 @@ func TestMsgAndSys(t *testing.T) {
 	// game message with ID 3
 	packed = PackMsgID(3, false)
 	u = NewUnpacker(packed)
-	id, sys, err = u.GetMsgAndSys()
+	id, sys, err = u.NextMsgAndSys()
 	if err != nil {
-		t.Fatalf("GetMsgAndSys error: %v", err)
+		t.Fatalf("NextMsgAndSys error: %v", err)
 	}
 	if id != 3 || sys {
 		t.Errorf("expected id=3 sys=false, got id=%d sys=%v", id, sys)
 	}
 }
 
-func TestGetRaw(t *testing.T) {
+func TestNextRaw(t *testing.T) {
 	t.Parallel()
 	data := []byte{0x01, 0x02, 0x03, 0x04}
 	u := NewUnpacker(data)
-	got, err := u.GetRaw(2)
+	got, err := u.NextRaw(2)
 	if err != nil {
-		t.Fatalf("GetRaw error: %v", err)
+		t.Fatalf("NextRaw error: %v", err)
 	}
 	if len(got) != 2 || got[0] != 0x01 || got[1] != 0x02 {
 		t.Errorf("unexpected: %v", got)
@@ -110,12 +110,12 @@ func TestGetRaw(t *testing.T) {
 func TestUnpackerEmpty(t *testing.T) {
 	t.Parallel()
 	u := NewUnpacker(nil)
-	_, err := u.GetByte()
+	_, err := u.NextByte()
 	if err == nil {
-		t.Error("expected error on empty unpacker GetByte")
+		t.Error("expected error on empty unpacker NextByte")
 	}
-	_, err = u.GetInt()
+	_, err = u.NextInt()
 	if err == nil {
-		t.Error("expected error on empty unpacker GetInt")
+		t.Error("expected error on empty unpacker NextInt")
 	}
 }

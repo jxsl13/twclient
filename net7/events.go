@@ -25,14 +25,14 @@ func (s *Session) emit(ev packet.Event) {
 
 func (s *Session) processMotd(data []byte) {
 	u := packer.NewUnpacker(data)
-	if text, err := u.GetString(); err == nil {
+	if text, err := u.NextString(); err == nil {
 		s.emit(packet.EventMotd{Text: text})
 	}
 }
 
 func (s *Session) processBroadcast(data []byte) {
 	u := packer.NewUnpacker(data)
-	if text, err := u.GetString(); err == nil {
+	if text, err := u.NextString(); err == nil {
 		s.emit(packet.EventBroadcast{Text: text})
 	}
 }
@@ -41,19 +41,19 @@ func (s *Session) processBroadcast(data []byte) {
 // unified chat / server-message / whisper events (V15, V17).
 func (s *Session) processChat(data []byte) {
 	u := packer.NewUnpacker(data)
-	mode, err := u.GetInt()
+	mode, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	target, err := u.GetInt()
+	target, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	msg, err := u.GetString()
+	msg, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -74,15 +74,15 @@ func (s *Session) processChat(data []byte) {
 
 func (s *Session) processTeam(data []byte) {
 	u := packer.NewUnpacker(data)
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	team, err := u.GetInt()
+	team, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	silent, err := u.GetInt()
+	silent, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -91,19 +91,19 @@ func (s *Session) processTeam(data []byte) {
 
 func (s *Session) processKillMsg(data []byte) {
 	u := packer.NewUnpacker(data)
-	killer, err := u.GetInt()
+	killer, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	victim, err := u.GetInt()
+	victim, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	weapon, err := u.GetInt()
+	weapon, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	modeSpecial, err := u.GetInt()
+	modeSpecial, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -114,7 +114,7 @@ func (s *Session) processTuneParams(data []byte) {
 	u := packer.NewUnpacker(data)
 	var raw []int32
 	for {
-		v, err := u.GetInt()
+		v, err := u.NextInt()
 		if err != nil {
 			break
 		}
@@ -125,18 +125,18 @@ func (s *Session) processTuneParams(data []byte) {
 
 func (s *Session) processWeaponPickup(data []byte) {
 	u := packer.NewUnpacker(data)
-	if weapon, err := u.GetInt(); err == nil {
+	if weapon, err := u.NextInt(); err == nil {
 		s.emit(packet.EventWeaponPickup{Weapon: packet.Weapon(weapon)})
 	}
 }
 
 func (s *Session) processEmoticon(data []byte) {
 	u := packer.NewUnpacker(data)
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	emoticon, err := u.GetInt()
+	emoticon, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -146,21 +146,21 @@ func (s *Session) processEmoticon(data []byte) {
 // processVoteSet decodes 0.7 Sv_VoteSet (clientID, type, timeout, desc, reason).
 func (s *Session) processVoteSet(data []byte) {
 	u := packer.NewUnpacker(data)
-	if _, err := u.GetInt(); err != nil { // m_ClientID
+	if _, err := u.NextInt(); err != nil { // m_ClientID
 		return
 	}
-	if _, err := u.GetInt(); err != nil { // m_Type
+	if _, err := u.NextInt(); err != nil { // m_Type
 		return
 	}
-	timeout, err := u.GetInt()
+	timeout, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	desc, err := u.GetString()
+	desc, err := u.NextString()
 	if err != nil {
 		return
 	}
-	reason, err := u.GetString()
+	reason, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -169,19 +169,19 @@ func (s *Session) processVoteSet(data []byte) {
 
 func (s *Session) processVoteStatus(data []byte) {
 	u := packer.NewUnpacker(data)
-	yes, err := u.GetInt()
+	yes, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	no, err := u.GetInt()
+	no, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	pass, err := u.GetInt()
+	pass, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	total, err := u.GetInt()
+	total, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -190,14 +190,14 @@ func (s *Session) processVoteStatus(data []byte) {
 
 func (s *Session) processVoteOptionAdd(data []byte) {
 	u := packer.NewUnpacker(data)
-	if desc, err := u.GetString(); err == nil {
+	if desc, err := u.NextString(); err == nil {
 		s.emit(packet.EventVoteOption{Op: packet.VoteOptionAdd, Desc: desc})
 	}
 }
 
 func (s *Session) processVoteOptionRemove(data []byte) {
 	u := packer.NewUnpacker(data)
-	if desc, err := u.GetString(); err == nil {
+	if desc, err := u.NextString(); err == nil {
 		s.emit(packet.EventVoteOption{Op: packet.VoteOptionRemove, Desc: desc})
 	}
 }
@@ -208,27 +208,27 @@ func (s *Session) processVoteClearOptions() {
 
 func (s *Session) processServerSettings(data []byte) {
 	u := packer.NewUnpacker(data)
-	kickVote, err := u.GetInt()
+	kickVote, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	kickMin, err := u.GetInt()
+	kickMin, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	specVote, err := u.GetInt()
+	specVote, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	teamLock, err := u.GetInt()
+	teamLock, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	teamBalance, err := u.GetInt()
+	teamBalance, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	playerSlots, err := u.GetInt()
+	playerSlots, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -246,33 +246,33 @@ func (s *Session) processServerSettings(data []byte) {
 // reported as the body skin-part name (the first of six parts).
 func (s *Session) processClientInfo(data []byte) {
 	u := packer.NewUnpacker(data)
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	if _, err := u.GetInt(); err != nil { // m_Local
+	if _, err := u.NextInt(); err != nil { // m_Local
 		return
 	}
-	team, err := u.GetInt()
+	team, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return
 	}
-	clan, err := u.GetString()
+	clan, err := u.NextString()
 	if err != nil {
 		return
 	}
-	country, err := u.GetInt()
+	country, err := u.NextInt()
 	if err != nil {
 		return
 	}
 	// 6 skin-part names; keep the first (body).
 	var skin string
 	for i := 0; i < 6; i++ {
-		part, err := u.GetString()
+		part, err := u.NextString()
 		if err != nil {
 			return
 		}
@@ -287,11 +287,11 @@ func (s *Session) processClientInfo(data []byte) {
 
 func (s *Session) processClientDrop(data []byte) {
 	u := packer.NewUnpacker(data)
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	reason, err := u.GetString()
+	reason, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -300,15 +300,15 @@ func (s *Session) processClientDrop(data []byte) {
 
 func (s *Session) processGameInfo(data []byte) {
 	u := packer.NewUnpacker(data)
-	gameFlags, err := u.GetInt()
+	gameFlags, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	scoreLimit, err := u.GetInt()
+	scoreLimit, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	timeLimit, err := u.GetInt()
+	timeLimit, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -319,7 +319,7 @@ func (s *Session) processGameMsg(data []byte) {
 	u := packer.NewUnpacker(data)
 	var params []int32
 	for {
-		v, err := u.GetInt()
+		v, err := u.NextInt()
 		if err != nil {
 			break
 		}
@@ -335,11 +335,11 @@ func (s *Session) processGameMsg(data []byte) {
 
 func (s *Session) processSkinChange(data []byte) {
 	u := packer.NewUnpacker(data)
-	cid, err := u.GetInt()
+	cid, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	skin, err := u.GetString()
+	skin, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -348,15 +348,15 @@ func (s *Session) processSkinChange(data []byte) {
 
 func (s *Session) processCommandInfo(data []byte) {
 	u := packer.NewUnpacker(data)
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return
 	}
-	help, err := u.GetString()
+	help, err := u.NextString()
 	if err != nil {
 		return
 	}
-	args, err := u.GetString()
+	args, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -365,7 +365,7 @@ func (s *Session) processCommandInfo(data []byte) {
 
 func (s *Session) processCommandInfoRemove(data []byte) {
 	u := packer.NewUnpacker(data)
-	if name, err := u.GetString(); err == nil {
+	if name, err := u.NextString(); err == nil {
 		s.emit(packet.EventCommandInfoRemove{Name: name})
 	}
 }

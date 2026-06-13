@@ -61,29 +61,29 @@ func ConnlessInfoPayload(datagram []byte) ([]byte, bool) {
 // is 0 = player, 1 = spectator (V60).
 func ParseInfoResponse(body []byte) (packet.ServerInfo, error) {
 	u := packer.NewUnpacker(body)
-	if _, err := u.GetInt(); err != nil { // request token echo
+	if _, err := u.NextInt(); err != nil { // request token echo
 		return packet.ServerInfo{}, fmt.Errorf("net7: info token: %w", err)
 	}
-	if _, err := u.GetString(); err != nil { // version
+	if _, err := u.NextString(); err != nil { // version
 		return packet.ServerInfo{}, fmt.Errorf("net7: info version: %w", err)
 	}
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return packet.ServerInfo{}, fmt.Errorf("net7: info name: %w", err)
 	}
-	if _, err := u.GetString(); err != nil { // hostname
+	if _, err := u.NextString(); err != nil { // hostname
 		return packet.ServerInfo{}, fmt.Errorf("net7: info hostname: %w", err)
 	}
-	mapName, _ := u.GetString()
-	gameType, _ := u.GetString()
-	flags, _ := u.GetInt()
-	if _, err := u.GetInt(); err != nil { // skill level
+	mapName, _ := u.NextString()
+	gameType, _ := u.NextString()
+	flags, _ := u.NextInt()
+	if _, err := u.NextInt(); err != nil { // skill level
 		return packet.ServerInfo{}, fmt.Errorf("net7: info skill: %w", err)
 	}
-	numPlayers, _ := u.GetInt()
-	maxPlayers, _ := u.GetInt()
-	numClients, _ := u.GetInt()
-	maxClients, _ := u.GetInt()
+	numPlayers, _ := u.NextInt()
+	maxPlayers, _ := u.NextInt()
+	numClients, _ := u.NextInt()
+	maxClients, _ := u.NextInt()
 	info := packet.ServerInfo{
 		Name:       name,
 		GameType:   gameType,
@@ -95,14 +95,14 @@ func ParseInfoResponse(body []byte) (packet.ServerInfo, error) {
 		MaxClients: maxClients,
 	}
 	for {
-		cname, err := u.GetString()
+		cname, err := u.NextString()
 		if err != nil {
 			break
 		}
-		cclan, _ := u.GetString()
-		country, _ := u.GetInt()
-		score, _ := u.GetInt()
-		pflag, _ := u.GetInt()
+		cclan, _ := u.NextString()
+		country, _ := u.NextInt()
+		score, _ := u.NextInt()
+		pflag, _ := u.NextInt()
 		info.Clients = append(info.Clients, packet.PlayerInfo{
 			Name:     cname,
 			Clan:     cclan,

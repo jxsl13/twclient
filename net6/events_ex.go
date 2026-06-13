@@ -72,11 +72,11 @@ func (s *Session) processExCapabilities(data []byte) {
 // the synchronous login handshake (where the event channel does not exist yet).
 func (s *Session) storeCapabilities(body []byte) (packet.ServerCapabilities, bool) {
 	u := packer.NewUnpacker(body)
-	version, err := u.GetInt()
+	version, err := u.NextInt()
 	if err != nil || version <= 0 {
 		return packet.ServerCapabilities{}, false
 	}
-	flags, err := u.GetInt()
+	flags, err := u.NextInt()
 	if err != nil {
 		return packet.ServerCapabilities{}, false
 	}
@@ -108,7 +108,7 @@ func (s *Session) processExTeamsState(data []byte) {
 	u := packer.NewUnpacker(data)
 	team := make(map[int]int)
 	for cid := 0; ; cid++ {
-		v, err := u.GetInt()
+		v, err := u.NextInt()
 		if err != nil {
 			break
 		}
@@ -121,11 +121,11 @@ func (s *Session) processExTeamsState(data []byte) {
 
 func (s *Session) processExKillMsgTeam(data []byte) {
 	u := packer.NewUnpacker(data)
-	team, err := u.GetInt()
+	team, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	first, err := u.GetInt()
+	first, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -134,7 +134,7 @@ func (s *Session) processExKillMsgTeam(data []byte) {
 
 func (s *Session) processExYourVote(data []byte) {
 	u := packer.NewUnpacker(data)
-	voted, err := u.GetInt()
+	voted, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -143,10 +143,10 @@ func (s *Session) processExYourVote(data []byte) {
 
 func (s *Session) processExRaceFinish(data []byte) {
 	u := packer.NewUnpacker(data)
-	if _, err := u.GetInt(); err != nil { // m_ClientId
+	if _, err := u.NextInt(); err != nil { // m_ClientId
 		return
 	}
-	timeCentis, err := u.GetInt()
+	timeCentis, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -155,15 +155,15 @@ func (s *Session) processExRaceFinish(data []byte) {
 
 func (s *Session) processExCommandInfo(data []byte) {
 	u := packer.NewUnpacker(data)
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return
 	}
-	args, err := u.GetString()
+	args, err := u.NextString()
 	if err != nil {
 		return
 	}
-	help, err := u.GetString()
+	help, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -172,7 +172,7 @@ func (s *Session) processExCommandInfo(data []byte) {
 
 func (s *Session) processExCommandInfoRemove(data []byte) {
 	u := packer.NewUnpacker(data)
-	name, err := u.GetString()
+	name, err := u.NextString()
 	if err != nil {
 		return
 	}
@@ -181,7 +181,7 @@ func (s *Session) processExCommandInfoRemove(data []byte) {
 
 func (s *Session) processExChangeInfoCooldown(data []byte) {
 	u := packer.NewUnpacker(data)
-	waitUntil, err := u.GetInt()
+	waitUntil, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -190,7 +190,7 @@ func (s *Session) processExChangeInfoCooldown(data []byte) {
 
 func (s *Session) processExMapSoundGlobal(data []byte) {
 	u := packer.NewUnpacker(data)
-	soundID, err := u.GetInt()
+	soundID, err := u.NextInt()
 	if err != nil {
 		return
 	}

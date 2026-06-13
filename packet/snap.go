@@ -191,15 +191,15 @@ func applyDelta(base *Snapshot, tick int, data []byte, itemSizeFn func(int) int)
 	u := &sc.u
 	u.Reset(data)
 
-	numDeleted, err := u.GetInt()
+	numDeleted, err := u.NextInt()
 	if err != nil {
 		return nil, fmt.Errorf("numDeleted: %w", err)
 	}
-	numUpdated, err := u.GetInt()
+	numUpdated, err := u.NextInt()
 	if err != nil {
 		return nil, fmt.Errorf("numUpdated: %w", err)
 	}
-	if _, err := u.GetInt(); err != nil {
+	if _, err := u.NextInt(); err != nil {
 		return nil, fmt.Errorf("unused: %w", err)
 	}
 
@@ -210,7 +210,7 @@ func applyDelta(base *Snapshot, tick int, data []byte, itemSizeFn func(int) int)
 
 	deleted := sc.deleted
 	for i := range numDeleted {
-		key, err := u.GetInt()
+		key, err := u.NextInt()
 		if err != nil {
 			return nil, fmt.Errorf("deleted key %d: %w", i, err)
 		}
@@ -239,11 +239,11 @@ func applyDelta(base *Snapshot, tick int, data []byte, itemSizeFn func(int) int)
 	flat := sc.flat[:0]
 	upds := sc.upds[:0]
 	for i := range numUpdated {
-		typeID, err := u.GetInt()
+		typeID, err := u.NextInt()
 		if err != nil {
 			return nil, fmt.Errorf("updated type %d: %w", i, err)
 		}
-		id, err := u.GetInt()
+		id, err := u.NextInt()
 		if err != nil {
 			return nil, fmt.Errorf("updated id %d: %w", i, err)
 		}
@@ -253,7 +253,7 @@ func applyDelta(base *Snapshot, tick int, data []byte, itemSizeFn func(int) int)
 			size = itemSizeFn(typeID)
 		}
 		if size < 0 {
-			size, err = u.GetInt()
+			size, err = u.NextInt()
 			if err != nil {
 				return nil, fmt.Errorf("updated size %d (type %d): %w", i, typeID, err)
 			}
@@ -261,7 +261,7 @@ func applyDelta(base *Snapshot, tick int, data []byte, itemSizeFn func(int) int)
 
 		deltaFields := sc.deltaBuf(size)
 		for f := 0; f < size; f++ {
-			v, err := u.GetInt()
+			v, err := u.NextInt()
 			if err != nil {
 				break
 			}

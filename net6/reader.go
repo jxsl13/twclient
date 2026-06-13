@@ -248,22 +248,22 @@ func (s *Session) processPayload(payload []byte) {
 func (s *Session) processSnapSingle(data []byte) {
 	u := &s.reader.snapUnpacker
 	u.Reset(data)
-	tick, err := u.GetInt()
+	tick, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	deltaTick, err := u.GetInt()
+	deltaTick, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	if _, err := u.GetInt(); err != nil {
+	if _, err := u.NextInt(); err != nil {
 		return // CRC
 	}
-	partSize, err := u.GetInt()
+	partSize, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	snapData, err := u.GetRaw(partSize)
+	snapData, err := u.NextRaw(partSize)
 	if err != nil {
 		return
 	}
@@ -280,11 +280,11 @@ func (s *Session) processSnapSingle(data []byte) {
 func (s *Session) processSnapEmpty(data []byte) {
 	u := &s.reader.snapUnpacker
 	u.Reset(data)
-	tick, err := u.GetInt()
+	tick, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	deltaTick, err := u.GetInt()
+	deltaTick, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -300,30 +300,30 @@ func (s *Session) processSnapEmpty(data []byte) {
 func (s *Session) processSnapMulti(data []byte) {
 	u := &s.reader.snapUnpacker
 	u.Reset(data)
-	tick, err := u.GetInt()
+	tick, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	deltaTick, err := u.GetInt()
+	deltaTick, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	numParts, err := u.GetInt()
+	numParts, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	partIndex, err := u.GetInt()
+	partIndex, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	if _, err := u.GetInt(); err != nil {
+	if _, err := u.NextInt(); err != nil {
 		return // CRC
 	}
-	partSize, err := u.GetInt()
+	partSize, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	snapData, err := u.GetRaw(partSize)
+	snapData, err := u.NextRaw(partSize)
 	if err != nil {
 		return
 	}
@@ -412,11 +412,11 @@ func (s *Session) sendAckPacket(tick int) {
 
 func (s *Session) processInputTiming(data []byte) {
 	u := packer.NewUnpacker(data)
-	intendedTick, err := u.GetInt()
+	intendedTick, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	timeLeft, err := u.GetInt()
+	timeLeft, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -428,15 +428,15 @@ func (s *Session) processInputTiming(data []byte) {
 
 func (s *Session) processDDRaceTime(data []byte) {
 	u := packer.NewUnpacker(data)
-	timeCentis, err := u.GetInt()
+	timeCentis, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	checkCentis, err := u.GetInt()
+	checkCentis, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	finishVal, err := u.GetInt()
+	finishVal, err := u.NextInt()
 	if err != nil {
 		return
 	}
@@ -485,11 +485,11 @@ func (e ddRaceTimeEvent) ToCheckpoint() packet.EventCheckpoint {
 
 func (s *Session) processRecord(data []byte) {
 	u := packer.NewUnpacker(data)
-	serverBest, err := u.GetInt()
+	serverBest, err := u.NextInt()
 	if err != nil {
 		return
 	}
-	playerBest, err := u.GetInt()
+	playerBest, err := u.NextInt()
 	if err != nil {
 		return
 	}

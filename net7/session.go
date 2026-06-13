@@ -601,7 +601,7 @@ func (s *Session) recvUntilReadyToEnter(ctx context.Context) error {
 // and the server pushes sv_map_window chunks at a time. MAP_DATA messages
 // contain only raw bytes (no header fields like 0.6).
 func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
-	info := s.GetMapInfo()
+	info := s.MapInfo()
 	if info.Name == "" {
 		return nil, fmt.Errorf("session07: no map info (call Login first)")
 	}
@@ -726,8 +726,8 @@ func (s *Session) MapName() string {
 	return s.mapInfo.Name
 }
 
-// GetMapInfo returns the current map metadata.
-func (s *Session) GetMapInfo() packet.MapInfo {
+// MapInfo returns the current map metadata.
+func (s *Session) MapInfo() packet.MapInfo {
 	s.mapMu.RLock()
 	defer s.mapMu.RUnlock()
 	return s.mapInfo

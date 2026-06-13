@@ -46,8 +46,8 @@ type Session interface {
 	// MapName returns the current map name.
 	MapName() string
 
-	// GetMapInfo returns the current map metadata.
-	GetMapInfo() packet.MapInfo
+	// MapInfo returns the current map metadata.
+	MapInfo() packet.MapInfo
 
 	// SetMap replaces the parsed map.
 	SetMap(m *twmap.Map, info packet.MapInfo)

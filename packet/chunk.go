@@ -71,7 +71,7 @@ func (h *ChunkHeader) Pack(split int) []byte {
 // Unpack deserializes a chunk header from the unpacker.
 func (h *ChunkHeader) Unpack(u *packer.Unpacker, split int) error {
 	sizeLowMask := (1 << split) - 1
-	raw, err := u.GetRaw(2)
+	raw, err := u.NextRaw(2)
 	if err != nil {
 		return fmt.Errorf("chunk header: %w", err)
 	}
@@ -81,7 +81,7 @@ func (h *ChunkHeader) Unpack(u *packer.Unpacker, split int) error {
 	h.Size = (int(raw[0]&0x3F) << split) | int(raw[1])&sizeLowMask
 
 	if h.Flags.Vital {
-		b, err := u.GetByte()
+		b, err := u.NextByte()
 		if err != nil {
 			return fmt.Errorf("chunk header vital seq: %w", err)
 		}
@@ -132,7 +132,7 @@ func UnpackChunks(payload []byte, split int) []Chunk {
 			}
 			break
 		}
-		data, err := u.GetRaw(hdr.Size)
+		data, err := u.NextRaw(hdr.Size)
 		if err != nil {
 			break
 		}

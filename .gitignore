@@ -3,3 +3,4 @@
 /cmd/
 go.sum
 *.log
+client.test
