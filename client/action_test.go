@@ -18,6 +18,7 @@ type stubSession struct {
 	spectate int
 	vote     bool
 	callVote [3]string
+	chatMsg  string
 }
 
 func (s *stubSession) Login(context.Context, string, string, ...packet.LoginOption) error {
@@ -34,7 +35,10 @@ func (s *stubSession) GetMapInfo() packet.MapInfo                      { return 
 func (s *stubSession) SetMap(*twmap.Map, packet.MapInfo)               {}
 func (s *stubSession) Poll() (packet.Event, error)                     { return nil, nil }
 func (s *stubSession) SendInput(int, int, int, []byte) error           { s.lastCall = "input"; return nil }
-func (s *stubSession) SendChat(string) error                           { s.lastCall = "chat"; return nil }
+func (s *stubSession) SendChat(msg string) error {
+	s.lastCall, s.chatMsg = "chat", msg
+	return nil
+}
 func (s *stubSession) SendChatTeam(team bool, _ string) error {
 	s.lastCall, s.chatTeam = "chatTeam", team
 	return nil

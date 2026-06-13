@@ -50,16 +50,17 @@ const inputMinInterval = 100 * time.Millisecond
 type Client struct {
 	sess Session
 
-	address  string
-	name     string
-	clan     string
-	skin     string
-	country  int
-	password string                    // server password, sent in handshake (V42); empty = unprotected
-	caps     packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
-	version  packet.Version
-	mapCache *packet.MapCache
-	log      *slog.Logger
+	address     string
+	name        string
+	clan        string
+	skin        string
+	country     int
+	password    string                    // server password, sent in handshake (V42); empty = unprotected
+	timeoutCode string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
+	caps        packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
+	version     packet.Version
+	mapCache    *packet.MapCache
+	log         *slog.Logger
 
 	// snap state — protected by mu
 	mu   sync.RWMutex
@@ -200,6 +201,15 @@ func WithPassword(password string) Option {
 	return func(c *Client) { c.password = password }
 }
 
+// WithTimeoutCode sets the DDNet timeout code used to reclaim the same tee
+// after an unexpected disconnect (V32). The code is stable for the client's
+// lifetime and re-sent on every reconnect. If left empty a random stable code
+// is generated at construction. Only used on DDNet 0.6 servers that advertise
+// the chat-timeout-code capability (V37).
+func WithTimeoutCode(code string) Option {
+	return func(c *Client) { c.timeoutCode = code }
+}
+
 // New creates a new headless client for the given server address.
 // By default it uses protocol version 0.6, discards logs, and creates
 // its own map cache. Use options to customize.
@@ -218,6 +228,11 @@ func New(address string, opts ...Option) *Client {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// A stable timeout code is required for tee reclaim; generate one when the
+	// caller did not provide it (V32).
+	if c.timeoutCode == "" {
+		c.timeoutCode = generateTimeoutCode()
 	}
 	return c
 }
@@ -285,6 +300,10 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	c.readerCancel = readerCancel
 	c.doneCh = make(chan struct{})
 	go c.eventLoop(readerCtx)
+
+	// Register the DDNet timeout code so a later reconnect can reclaim this tee
+	// (V32, V37). No-op on non-DDNet servers / 0.7.
+	c.sendTimeoutCode()
 
 	return nil
 }

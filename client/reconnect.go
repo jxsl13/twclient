@@ -1,11 +1,59 @@
 package client
 
 import (
+	"crypto/rand"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jxsl13/twclient/packet"
 )
+
+// timeoutCodeAlphabet is the character set for generated timeout codes.
+const timeoutCodeAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// generateTimeoutCode returns a random 16-character timeout code. DDNet derives
+// its code from a seed + server address, but the server only compares the code
+// for equality on reclaim, so any stable per-client value works (V32).
+func generateTimeoutCode() string {
+	const n = 16
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "twclientfallback"
+	}
+	for i := range b {
+		b[i] = timeoutCodeAlphabet[int(b[i])%len(timeoutCodeAlphabet)]
+	}
+	return string(b)
+}
+
+// TimeoutCode returns the DDNet timeout code this client registers for tee
+// reclaim (V32). It is stable across reconnects.
+func (c *Client) TimeoutCode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.timeoutCode
+}
+
+// sendTimeoutCode registers the timeout code with the server via the DDNet chat
+// command "/timeout <code>", so a later reconnect can reclaim this tee (V32,
+// V37). It is a no-op unless the server is DDNet 0.6 and advertises the
+// chat-timeout-code capability.
+func (c *Client) sendTimeoutCode() {
+	c.mu.RLock()
+	code := c.timeoutCode
+	caps := c.caps
+	sess := c.sess
+	c.mu.RUnlock()
+
+	if sess == nil || code == "" || c.version != packet.Version06 || !caps.ChatTimeoutCode {
+		return
+	}
+	if err := sess.SendChat("/timeout " + code); err != nil {
+		c.log.Warn("failed to send timeout code", "error", err)
+	}
+}
 
 // DisconnectKind classifies why a server connection ended, derived from the
 // CTRL_CLOSE reason string (V34).
