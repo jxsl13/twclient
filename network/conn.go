@@ -6,26 +6,23 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"time"
 
 	"github.com/jxsl13/twclient/packet"
 )
 
-// defaultReadTimeout returns the read timeout from TW_TIMEOUT env or 5s.
-func defaultReadTimeout() time.Duration {
-	if v := os.Getenv("TW_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return 5 * time.Second
-}
+// DefaultReadTimeout is the read/write deadline used when none is set via
+// WithReadTimeout/WithWriteTimeout. It matches DDNet's conn_timeout default
+// (100s, src/engine/shared/config_variables.h "Network timeout").
+//
+// The library reads NO environment variables — a caller who wants env-driven
+// timeouts must read the env itself and pass WithReadTimeout/WithWriteTimeout.
+const DefaultReadTimeout = 100 * time.Second
 
-// defaultReadBufferSize is the UDP socket receive-buffer size used when none is
+// DefaultReadBufferSize is the UDP socket receive-buffer size used when none is
 // configured (V54). 2MB absorbs burst snapshot delivery when many bots share
 // scheduling time; the default (786KB) can overflow.
-const defaultReadBufferSize = 2 * 1024 * 1024
+const DefaultReadBufferSize = 2 * 1024 * 1024
 
 // Conn wraps a raw UDP connection for sending and receiving teeworlds packets.
 // Timeouts are set at construction time via DialOption and are immutable
@@ -81,13 +78,13 @@ func Dial(address string, opts ...DialOption) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial: dial %q: %w", address, err)
 	}
-	rt := defaultReadTimeout()
+	rt := DefaultReadTimeout
 	c := &Conn{
 		conn:           udp,
 		addr:           addr,
 		readTimeout:    rt,
 		writeTimeout:   rt,
-		readBufferSize: defaultReadBufferSize,
+		readBufferSize: DefaultReadBufferSize,
 		log:            slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {

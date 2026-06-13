@@ -68,12 +68,12 @@ type SnapStorage struct {
 	ItemSizeFn func(typeID int) int // returns field count or -1; nil → always read from stream
 }
 
-// defaultMaxSnaps is the retained-snapshot window used when none is configured.
-// minMaxSnaps is the floor a configured window is clamped up to, so the
+// DefaultMaxSnaps is the retained-snapshot window used when none is configured.
+// MinMaxSnaps is the floor a configured window is clamped up to, so the
 // delta-decompression base (prev + current + slack) is always retained (V53).
 const (
-	defaultMaxSnaps = 16
-	minMaxSnaps     = 3
+	DefaultMaxSnaps = 16
+	MinMaxSnaps     = 3
 )
 
 // SnapStorageOption configures a SnapStorage at construction time.
@@ -81,15 +81,15 @@ type SnapStorageOption func(*SnapStorage)
 
 // WithMaxSnaps sets the retained-snapshot window (MaxSnaps). Invalid input is
 // clamped so a partial/bad value cannot break delta decoding (V41, V53):
-// n <= 0 falls back to the default (16); 0 < n < minMaxSnaps is raised to
-// minMaxSnaps so the server's delta base is never purged out from under us.
+// n <= 0 falls back to the default (16); 0 < n < MinMaxSnaps is raised to
+// MinMaxSnaps so the server's delta base is never purged out from under us.
 func WithMaxSnaps(n int) SnapStorageOption {
 	return func(ss *SnapStorage) {
 		switch {
 		case n <= 0:
-			ss.MaxSnaps = defaultMaxSnaps
-		case n < minMaxSnaps:
-			ss.MaxSnaps = minMaxSnaps
+			ss.MaxSnaps = DefaultMaxSnaps
+		case n < MinMaxSnaps:
+			ss.MaxSnaps = MinMaxSnaps
 		default:
 			ss.MaxSnaps = n
 		}
@@ -111,7 +111,7 @@ func WithMaxSnaps(n int) SnapStorageOption {
 func NewSnapStorage(itemSizeFn func(typeID int) int, opts ...SnapStorageOption) *SnapStorage {
 	ss := &SnapStorage{
 		Snaps:      make(map[int]*Snapshot),
-		MaxSnaps:   defaultMaxSnaps,
+		MaxSnaps:   DefaultMaxSnaps,
 		ItemSizeFn: itemSizeFn,
 	}
 	for _, opt := range opts {

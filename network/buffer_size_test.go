@@ -10,10 +10,10 @@ func TestWithReadBufferSize(t *testing.T) {
 		opts []DialOption
 		want int
 	}{
-		{"default", nil, defaultReadBufferSize},
+		{"default", nil, DefaultReadBufferSize},
 		{"set", []DialOption{WithReadBufferSize(4 * 1024 * 1024)}, 4 * 1024 * 1024},
-		{"zero-default", []DialOption{WithReadBufferSize(0)}, defaultReadBufferSize},
-		{"neg-default", []DialOption{WithReadBufferSize(-1)}, defaultReadBufferSize},
+		{"zero-default", []DialOption{WithReadBufferSize(0)}, DefaultReadBufferSize},
+		{"neg-default", []DialOption{WithReadBufferSize(-1)}, DefaultReadBufferSize},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -26,6 +26,10 @@ var DefaultMasters = []string{
 	"https://master4.ddnet.org/ddnet/15/servers.json",
 }
 
+// DefaultHTTPTimeout is the timeout of the HTTP client FetchServerList builds
+// when WithHTTPClient is not given (V62).
+const DefaultHTTPTimeout = 10 * time.Second
+
 // PlayerInfo and ServerInfo are the version-agnostic result types, defined in
 // packet (V60) so net6/net7 parsers can return them without an import cycle.
 // Aliased here for ergonomic master.ServerInfo/master.PlayerInfo use.
@@ -116,7 +120,7 @@ func WithMasters(urls []string) FetchOption {
 
 func newFetchConfig(opts ...FetchOption) fetchConfig {
 	fc := fetchConfig{
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  &http.Client{Timeout: DefaultHTTPTimeout},
 		masters: DefaultMasters,
 	}
 	for _, opt := range opts {

@@ -6,14 +6,14 @@ import (
 	"github.com/jxsl13/twclient/packet"
 )
 
-// defaultPredInputRingSize is the number of recent inputs kept for prediction
+// DefaultPredInputRingSize is the number of recent inputs kept for prediction
 // re-simulation — a few seconds at 50 ticks/s is ample to cover the gap
 // between the acked tick and the predicted tick (the original hardcoded value).
-// minPredInputRingSize is the floor a configured ring is clamped up to, so the
+// MinPredInputRingSize is the floor a configured ring is clamped up to, so the
 // re-sim window from the acked tick forward is always covered (V54).
 const (
-	defaultPredInputRingSize = 256
-	minPredInputRingSize     = 8
+	DefaultPredInputRingSize = 256
+	MinPredInputRingSize     = 8
 )
 
 // clampPredInputRingSize validates a configured ring size (V41/V54): n <= 0
@@ -21,9 +21,9 @@ const (
 func clampPredInputRingSize(n int) int {
 	switch {
 	case n <= 0:
-		return defaultPredInputRingSize
-	case n < minPredInputRingSize:
-		return minPredInputRingSize
+		return DefaultPredInputRingSize
+	case n < MinPredInputRingSize:
+		return MinPredInputRingSize
 	default:
 		return n
 	}
@@ -56,7 +56,7 @@ func (b *predInputBuffer) configure(n int) {
 // ensureRing lazily allocates the default ring; caller must hold b.mu.
 func (b *predInputBuffer) ensureRing() {
 	if len(b.ring) == 0 {
-		b.ring = make([]predInput, defaultPredInputRingSize)
+		b.ring = make([]predInput, DefaultPredInputRingSize)
 	}
 }
 

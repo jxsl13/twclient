@@ -8,24 +8,24 @@ import (
 
 // V53: no option → default window (16). Existing behavior unchanged.
 func TestNewSnapStorageDefaultMaxSnaps(t *testing.T) {
-	if ss := NewSnapStorage(nil); ss.MaxSnaps != defaultMaxSnaps {
-		t.Fatalf("default MaxSnaps = %d, want %d", ss.MaxSnaps, defaultMaxSnaps)
+	if ss := NewSnapStorage(nil); ss.MaxSnaps != DefaultMaxSnaps {
+		t.Fatalf("default MaxSnaps = %d, want %d", ss.MaxSnaps, DefaultMaxSnaps)
 	}
 }
 
 // V53/V41: WithMaxSnaps validates in the ctor — valid values pass through,
-// n <= 0 falls back to the default, and 0 < n < minMaxSnaps is clamped up so
+// n <= 0 falls back to the default, and 0 < n < MinMaxSnaps is clamped up so
 // the delta base is never purged out from under the decoder.
 func TestWithMaxSnapsClamp(t *testing.T) {
 	cases := []struct{ in, want int }{
 		{64, 64},
 		{16, 16},
-		{minMaxSnaps, minMaxSnaps},
-		{minMaxSnaps - 1, minMaxSnaps},
-		{1, minMaxSnaps},
-		{0, defaultMaxSnaps},
-		{-1, defaultMaxSnaps},
-		{-100, defaultMaxSnaps},
+		{MinMaxSnaps, MinMaxSnaps},
+		{MinMaxSnaps - 1, MinMaxSnaps},
+		{1, MinMaxSnaps},
+		{0, DefaultMaxSnaps},
+		{-1, DefaultMaxSnaps},
+		{-100, DefaultMaxSnaps},
 	}
 	for _, c := range cases {
 		if ss := NewSnapStorage(nil, WithMaxSnaps(c.in)); ss.MaxSnaps != c.want {
@@ -48,7 +48,7 @@ func TestSnapStorageSmallWindowDecodeParity(t *testing.T) {
 	}
 
 	big := NewSnapStorage(charSizeFn)                              // default 16
-	small := NewSnapStorage(charSizeFn, WithMaxSnaps(minMaxSnaps)) // clamped floor (3)
+	small := NewSnapStorage(charSizeFn, WithMaxSnaps(MinMaxSnaps)) // clamped floor (3)
 
 	// Seed both with the same full snapshot (delta vs an empty base).
 	seed := buildDelta(n)

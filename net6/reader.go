@@ -14,14 +14,14 @@ import (
 // so it can periodically check the stop signal.
 const readerTimeout = 50 * time.Millisecond
 
-// defaultEventChanSize is the reader event-channel buffer used when none is
+// DefaultEventChanSize is the reader event-channel buffer used when none is
 // configured (V54).
-const defaultEventChanSize = 128
+const DefaultEventChanSize = 128
 
 // eventChanSizeOrDefault returns n if positive, else the default (V54).
 func eventChanSizeOrDefault(n int) int {
 	if n <= 0 {
-		return defaultEventChanSize
+		return DefaultEventChanSize
 	}
 	return n
 }

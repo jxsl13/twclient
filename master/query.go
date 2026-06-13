@@ -17,6 +17,10 @@ import (
 // framing AND body decode come from net6/net7 helpers — this package never
 // touches packet bytes or fields (V59/V60); it only orchestrates the UDP
 // exchange and returns the packet.ServerInfo the parser produced.
+// DefaultQueryTimeout is the overall timeout for QueryServerInfo when
+// WithQueryTimeout is not given (V62).
+const DefaultQueryTimeout = 5 * time.Second
+
 const (
 	maxInfoReads = 8 // stray-packet tolerance while waiting for the info reply
 )
@@ -45,7 +49,7 @@ func WithQueryTimeout(d time.Duration) QueryOption {
 // current Clients player list). The call is bounded by the option timeout and
 // the context.
 func QueryServerInfo(ctx context.Context, version packet.Version, addr string, opts ...QueryOption) (ServerInfo, error) {
-	qc := queryConfig{timeout: 5 * time.Second}
+	qc := queryConfig{timeout: DefaultQueryTimeout}
 	for _, o := range opts {
 		o(&qc)
 	}

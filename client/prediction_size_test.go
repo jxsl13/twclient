@@ -14,11 +14,11 @@ func TestWithPredInputRingSize(t *testing.T) {
 		opts []Option
 		want int
 	}{
-		{"default", nil, defaultPredInputRingSize},
+		{"default", nil, DefaultPredInputRingSize},
 		{"set", []Option{WithPredInputRingSize(512)}, 512},
-		{"clamp-up", []Option{WithPredInputRingSize(1)}, minPredInputRingSize},
-		{"clamp-default", []Option{WithPredInputRingSize(0)}, defaultPredInputRingSize},
-		{"clamp-default-neg", []Option{WithPredInputRingSize(-5)}, defaultPredInputRingSize},
+		{"clamp-up", []Option{WithPredInputRingSize(1)}, MinPredInputRingSize},
+		{"clamp-default", []Option{WithPredInputRingSize(0)}, DefaultPredInputRingSize},
+		{"clamp-default-neg", []Option{WithPredInputRingSize(-5)}, DefaultPredInputRingSize},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -33,10 +33,10 @@ func TestWithPredInputRingSize(t *testing.T) {
 // V54: record/get round-trip works at a small configured ring, and wraparound
 // evicts the stale tick — behavior identical to the default ring, just smaller.
 func TestPredInputRingSmallWraparound(t *testing.T) {
-	cl := New("localhost:8303", WithPredInputRingSize(minPredInputRingSize))
+	cl := New("localhost:8303", WithPredInputRingSize(MinPredInputRingSize))
 	size := len(cl.predInputs.ring)
-	if size != minPredInputRingSize {
-		t.Fatalf("ring len = %d, want %d", size, minPredInputRingSize)
+	if size != MinPredInputRingSize {
+		t.Fatalf("ring len = %d, want %d", size, MinPredInputRingSize)
 	}
 
 	in := packet.PlayerInput{Direction: 1}

@@ -48,10 +48,10 @@ func TestWithEventChanSize(t *testing.T) {
 		opts []Option
 		want int
 	}{
-		{"default", nil, defaultEventChanSize},
+		{"default", nil, DefaultEventChanSize},
 		{"set", []Option{WithEventChanSize(512)}, 512},
-		{"zero-default", []Option{WithEventChanSize(0)}, defaultEventChanSize},
-		{"neg-default", []Option{WithEventChanSize(-1)}, defaultEventChanSize},
+		{"zero-default", []Option{WithEventChanSize(0)}, DefaultEventChanSize},
+		{"neg-default", []Option{WithEventChanSize(-1)}, DefaultEventChanSize},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -22,11 +22,11 @@ func TestPredInputBuffer(t *testing.T) {
 	}
 
 	// A tick that was overwritten by ring wraparound is reported as absent.
-	b.record(10+defaultPredInputRingSize, packet.PlayerInput{Direction: -1})
+	b.record(10+DefaultPredInputRingSize, packet.PlayerInput{Direction: -1})
 	if _, ok := b.get(10); ok {
 		t.Error("stale tick should be evicted after wraparound")
 	}
-	if got, ok := b.get(10 + defaultPredInputRingSize); !ok || got.Direction != -1 {
+	if got, ok := b.get(10 + DefaultPredInputRingSize); !ok || got.Direction != -1 {
 		t.Errorf("wrapped slot should hold the newest input: %#v ok=%v", got, ok)
 	}
 }
