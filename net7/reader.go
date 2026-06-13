@@ -23,6 +23,11 @@ type reader struct {
 	lastRecv     atomic.Int64
 	snaps        *packet.SnapStorage
 	snapAssembly *packet.SnapAssemblyState
+	// snapUnpacker is reused across the 50Hz snapshot parse path so each
+	// inbound snap message no longer allocates a fresh Unpacker (T37, V51).
+	// Goroutine-confined to readLoop; never used for data retained past the
+	// call (multipart parts are copied out, V52).
+	snapUnpacker packer.Unpacker
 }
 
 // StartReader launches a background goroutine that reads packets from
@@ -231,7 +236,8 @@ func (s *Session) processPayload(payload []byte) {
 }
 
 func (s *Session) processSnapSingle(data []byte) {
-	u := packer.NewUnpacker(data)
+	u := &s.reader.snapUnpacker
+	u.Reset(data)
 	tick, err := u.GetInt()
 	if err != nil {
 		return
@@ -262,7 +268,8 @@ func (s *Session) processSnapSingle(data []byte) {
 }
 
 func (s *Session) processSnapEmpty(data []byte) {
-	u := packer.NewUnpacker(data)
+	u := &s.reader.snapUnpacker
+	u.Reset(data)
 	tick, err := u.GetInt()
 	if err != nil {
 		return
@@ -281,7 +288,8 @@ func (s *Session) processSnapEmpty(data []byte) {
 }
 
 func (s *Session) processSnapMulti(data []byte) {
-	u := packer.NewUnpacker(data)
+	u := &s.reader.snapUnpacker
+	u.Reset(data)
 	tick, err := u.GetInt()
 	if err != nil {
 		return
@@ -332,7 +340,9 @@ func (s *Session) processSnapMulti(data []byte) {
 		s.reader.snapAssembly = asm
 	}
 	if partIndex >= 0 && partIndex < numParts {
-		asm.Parts[partIndex] = snapData
+		// snapData aliases the reused snapUnpacker buffer; the part is retained
+		// across messages until all parts arrive, so copy it out (V52).
+		asm.Parts[partIndex] = append([]byte(nil), snapData...)
 		asm.Received++
 	}
 

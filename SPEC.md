@@ -471,7 +471,7 @@ T32|x|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRc
 T34|x|bench harness (-benchmem, no new deps): BenchmarkApplyDelta/ProcessSnap (packet), UnpackInt/GetString/Pack* (packer), ProcessMessage (net6/7), PredictTick/BuildTickState/DeriveEvents (client); record baseline ns/op + allocs/op|V49,I.perf
 T35|x|profile: cpuprofile+memprofile per pkg → rank top CPU fns + alloc sites; record measured top-N in §PERF; pick optimization targets (⊥ unmeasured)|V48,V49,I.perf
 T36|x|applyDelta O(1) item index: replace linear updated-item scan (snap.go:231) with itemKey→idx map; parity test vs old result; bench delta|V50,V48,V49
-T37|.|Unpacker reuse: pool/Reset across the 73 NewUnpacker sites (net6/net7 readers) — one buffer per session reader, ⊥ alloc+copy per inbound msg; verify no cross-msg aliasing|V51,V52,V48
+T37|x|Unpacker reuse: pool/Reset across the 73 NewUnpacker sites (net6/net7 readers) — one buffer per session reader, ⊥ alloc+copy per inbound msg; verify no cross-msg aliasing|V51,V52,V48
 T38|.|packer pack path: AppendInt/AppendStr/AppendMsgID into a reused builder buffer (keep PackInt etc as thin wrappers); GetStringSanitized preallocate buf by RemainingSize|V51,V48
 T39|.|client per-tick alloc cut: snap.go derive* append into one evs (cap=prev len), swap prev/cur maps instead of realloc, trim charactersCopy churn|V51,V52,V48
 T40|.|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
