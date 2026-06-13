@@ -91,6 +91,7 @@ type Client struct {
 	predictEnabled bool
 	antiping       bool
 	predWorld      *PredictedWorld
+	prevPredWorld  *PredictedWorld // previous tick's world, for render smoothing (V21)
 	predCol        *physics.Collision
 	predTun        physics.Tuning
 	tunings        map[int]physics.Tuning // per tune-zone (zone 0 = default), V29

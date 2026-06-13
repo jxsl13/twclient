@@ -305,7 +305,7 @@ T9|x|PredictedWorld: two-world (GameWorld snap-seed + PredictedWorld copy→Tick
 T9a|x|antiping others: extrapolate non-local chars (reuse last intent, Core.Tick); PredictedCharacters() map|V9a,I.predict
 T9b|x|projectile prediction via physics.Tuning.ProjectilePos + PredictedProjectiles() (laser is hitscan, no ballistic predict). B2 resolved|V9,I.predict
 T10|x|reconcile whole world on EventSnapshot; expose PredictedCharacter()/PredictedCharacters(); converge|V10,I.predict
-T10a|.|reconcile smoothing — RE-SCOPED (B3 reverted, V21): keep prev+cur PredictedWorld, SmoothedCharacters(intraTick) lerp for render|V10a,V11,V21,I.predict
+T10a|x|reconcile smoothing — RE-SCOPED (B3 reverted, V21): keep prev+cur PredictedWorld, SmoothedCharacters(intraTick) lerp for render|V10a,V11,V21,I.predict
 T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks, smoothing no-teleport, disabled==raw|V9,V9a,V10,V10a,V11
 T12|x|unified Action type (input/chat/whisper/emoticon/kill/vote/callvote/setteam/spectate) + c.Do(Action) → net6 & net7 send|V18,V22,I.consumer
 T13|x|TickState observation struct: predicted local+all chars, projectiles, lasers/pickups/flags, tuning, game/race, events-since-tick|V19,I.consumer

@@ -74,6 +74,33 @@ func TestPredictionAccessorsEnabled(t *testing.T) {
 	}
 }
 
+// V21: SmoothedCharacters interpolates positions between the previous and
+// current predicted worlds (no teleport between ticks).
+func TestSmoothedCharacters(t *testing.T) {
+	col := openCollision()
+	tun := physics.DefaultTuning()
+	c := &Client{predictEnabled: true}
+	c.prevPredWorld = newPredictedWorld(col, tun, 0, map[int]CharacterState{1: {X: 100, Y: 200}})
+	c.predWorld = newPredictedWorld(col, tun, 0, map[int]CharacterState{1: {X: 300, Y: 200}})
+
+	// Midpoint: halfway between 100 and 300.
+	mid := c.SmoothedCharacters(0.5)
+	if mid[1].X != 200 {
+		t.Errorf("intra=0.5 X: want 200, got %d", mid[1].X)
+	}
+	// Endpoints.
+	if c.SmoothedCharacters(0)[1].X != 100 {
+		t.Errorf("intra=0 should be previous tick (100)")
+	}
+	if c.SmoothedCharacters(1)[1].X != 300 {
+		t.Errorf("intra=1 should be current tick (300)")
+	}
+	// Clamping.
+	if c.SmoothedCharacters(2)[1].X != 300 {
+		t.Errorf("intra>1 should clamp to current")
+	}
+}
+
 // openCollision is empty space (nothing solid), for deterministic motion tests.
 func openCollision() *physics.Collision {
 	return &physics.Collision{Solid: func(int, int) bool { return false }}

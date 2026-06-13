@@ -204,8 +204,43 @@ func (c *Client) reconcilePrediction() {
 	}
 
 	c.mu.Lock()
+	c.prevPredWorld = c.predWorld
 	c.predWorld = w
 	c.mu.Unlock()
+}
+
+// SmoothedCharacters returns predicted characters with positions interpolated
+// between the previous and current predicted worlds by intra∈[0,1], for
+// teleport-free rendering between ticks (V21). intra=0 yields the previous
+// tick, intra=1 the current. Non-position fields come from the current world.
+func (c *Client) SmoothedCharacters(intra float32) map[int]CharacterState {
+	if intra < 0 {
+		intra = 0
+	} else if intra > 1 {
+		intra = 1
+	}
+	c.mu.RLock()
+	cur := c.predWorld
+	prev := c.prevPredWorld
+	c.mu.RUnlock()
+
+	if cur == nil {
+		return c.PredictedCharacters()
+	}
+	out := cur.characters()
+	if prev == nil {
+		return out
+	}
+	for cid, ch := range out {
+		p, ok := prev.character(cid)
+		if !ok {
+			continue
+		}
+		ch.X = p.X + int(float32(ch.X-p.X)*intra)
+		ch.Y = p.Y + int(float32(ch.Y-p.Y)*intra)
+		out[cid] = ch
+	}
+	return out
 }
 
 // PredictedCharacter returns the predicted local character state. With
