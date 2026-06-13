@@ -166,11 +166,14 @@ DDNet model (verified `gameclient.cpp`, `prediction/gameworld.cpp`):
 smoothing: on reconcile lerp prev→new predicted over window. ⊥ teleport visible.
 
 ### consumer / agent interface (tick-driven, protocol-unified)
-ONE pluggable interface serves ALL consumers identically: visual UI (render + user input), ML training (ingest per-tick state), ML execution (state→action). Same plug into headless client. Consumer ⊥ see protocol version (V18). Drives off PREDICTED state each tick.
+Two roles, ONE shared TickState. MANY view-only Observers + exactly ONE view+action Controller (V20, V31). Consumers ⊥ see protocol version (V18). Drive off PREDICTED state each tick.
 ```
-type: Frontend (consumer) interface — plugged via WithFrontend(f) / SetFrontend(f)
-  OnTick(c *Client, st TickState) []Action   // observe predicted tick → emit actions
-  (optional OnEvent(c, packet.Event) for async server events not tied to a tick)
+type: Observer interface — view only, MANY allowed; plug via AddObserver(o) → remove()
+  Mode() TickMode
+  Observe(c *Client, st TickState)            // ingest predicted tick (render / ML training); NO actions
+type: Controller interface — view + action, exactly ONE; plug via SetController(ctrl) / WithController(ctrl)
+  Mode() TickMode
+  OnTick(c *Client, st TickState) []Action    // observe predicted tick → emit actions (ML policy / user input)
 
 obs: TickState — COMPLETE observable+predicted state for one tick (V19), self-contained:
   Tick, IntraTick float (sub-tick for smooth render, V21)
@@ -178,7 +181,7 @@ obs: TickState — COMPLETE observable+predicted state for one tick (V19), self-
   Players   map[int]CharacterState       // predicted pos/vel/hook/weapon/freeze/flags, all visible cids (ONE char type, V25)
   Projectiles []ProjectileState          // predicted (T9b)
   Lasers, Pickups, Flags                  // visible entities
-  Map       MapView                       // full static map: all layers + tune-zone (T14, V28)
+  Map       *MapView                      // full static map: all layers + tune-zone (T14, V28)
   Tuning       physics.Tuning             // default (zone-0) server tuning
   ActiveTuning physics.Tuning             // tuning resolved at LOCAL self tile (tune-zone, V29)
   SelfTuneZone int                        // tune-zone index at self
@@ -200,13 +203,12 @@ ML view: same TickState = observation vector; Action = policy output. train + ex
 smoothing (T10a, now in-scope V21): keep prev+cur PredictedWorld; SmoothedCharacters(intraTick) lerps
   prev→cur per cid for render between ticks. ref DDNet mix(m_PrevPredicted,m_Predicted,intraTick).
 
-dual cadence (V24) — Frontend declares mode, driver picks loop:
-  TickModeFixed : OnTick once per predicted tick (50Hz, IntraTick=0). ML/training. deterministic.
-  TickModeFrame : OnTick per render frame; IntraTick∈[0,1) from wall-clock between ticks; positions
-                  smoothed. UI/render.
-clean impl: ONE canonical builder `buildTickState(tick) TickState` (IntraTick=0). fixed mode calls it
-  per new tick. frame mode calls it for the latest tick, then overlays SmoothedCharacters(intra) +
-  sets IntraTick — NO duplicate state-assembly. ⊥ two divergent TickState code paths (V24).
+dual cadence (V24) — each consumer declares mode; ONE driver loop dispatches to all (V31):
+  TickModeFixed : per predicted tick (50Hz, IntraTick=0). ML/training. deterministic.
+  TickModeFrame : per render frame; IntraTick∈[0,1) from wall-clock; positions smoothed. UI/render.
+clean impl: ONE canonical builder `buildTickState(tick) TickState` (IntraTick=0). build once per
+  (tick,intra) and share across all consumers of that cadence. frame overlays SmoothedCharacters(intra)
+  + IntraTick. ⊥ duplicate state-assembly. observers get state; controller also returns actions → Do.
 plug: `type Frontend interface { Mode() TickMode; OnTick(*Client, TickState) []Action }`. one builder,
   two thin loops. headless/ML & UI share everything except the cadence wrapper.
 ```
@@ -269,10 +271,11 @@ scalars (per-tick, appended to obs):
 - V17: protocol-unified events (generalizes V15 to whole catalog). ONE event struct per logical event, defined once (`packet`). net6 & net7 readers both emit it. consumer/callback code ⊥ branch on `version`, ⊥ see net6/net7 types. event present in only 1 protocol → documented version-only in §I + `?`. snap-derived events identical (snap format shared post-decode). test: same handler fires on both 0.6 & 0.7 server for shared events.
 - V18: consumer interface protocol-unified (extends V17 to actions). `Action` set & `TickState` identical regardless of 0.6/0.7. `c.Do(Action)` maps to the active session's send. consumer/Frontend ⊥ branch on version, ⊥ see net6/net7 types.
 - V19: `TickState` self-contained & complete — ∀ data a consumer needs for one tick present: predicted local+all chars, projectiles, visible entities, MapView (collision env incl unhookable tile positions), tuning, game/race state, events-since-last-tick. ⊥ require consumer to call back for missing state. built from PREDICTED world (V9), not raw snap.
-- V20: ONE plug ∀ consumers — UI render, UI input, ML train-ingest, ML exec — implement same `Frontend` interface, plug identically (`WithFrontend`/`SetFrontend`) into headless `Client`. ⊥ separate API per use case. UI-input path == ML-action path == `c.Do(Action)`.
+- V20: two consumer roles, ONE shared `TickState`/observation path. `Observer` = view-only (`Observe(c,st)`, no actions) — MANY may plug (renderers, ML-training data collectors). `Controller` = view + action (`OnTick(c,st)[]Action`) — exactly ONE (the actor / ML policy). both share the same per-tick state; ⊥ separate API per use case. controller action path == `c.Do(Action)`. ⊥ multiple controllers (avoids conflicting input); replacing the controller is allowed. registry concurrency-safe.
 - V21: smoothing IN-SCOPE (supersedes B3 deferral — render consumer now exists). keep prev+cur `PredictedWorld`; `TickState.IntraTick` + `SmoothedCharacters(intra)` lerp prev→cur per cid. render ⊥ teleport between ticks. headless-only consumers may ignore (intra=0 == V10/predicted).
 - V22: `Action` covers full ddnet + 0.7 client action set — movement/aim/jump/hook/fire/weapon, chat, team chat, whisper, emoticon, kill, vote, call-vote, set-team, spectate. each ! map to a net6 AND net7 send (or documented version-only + `?`). missing action → `?`-flag + §T row.
-- V24: dual cadence, single builder. driver supports `TickModeFixed` (50Hz, IntraTick=0, ML) & `TickModeFrame` (render rate, IntraTick∈[0,1), smoothed). BOTH go through ONE `buildTickState(tick)`; frame mode only overlays `SmoothedCharacters(intra)` + IntraTick on top. ⊥ duplicate/divergent TickState assembly per mode. Frontend.Mode() selects loop; everything else shared.
+- V24: dual cadence, single builder. driver supports `TickModeFixed` (50Hz, IntraTick=0, ML) & `TickModeFrame` (render rate, IntraTick∈[0,1), smoothed). BOTH go through ONE `buildTickState(tick)`; frame mode only overlays `SmoothedCharacters(intra)` + IntraTick on top. ⊥ duplicate/divergent TickState assembly per mode. consumer `Mode()` selects cadence; everything else shared.
+- V31: ONE driver loop dispatches each tick to ALL observers + the single controller, each per its `Mode()` (fixed consumers on new predicted tick, frame consumers per render frame). per-consumer observation scope (window size, planes) is CONSUMER-side: each crops its own view from `TickState.Map`/entities — ⊥ global obs config. only the controller's returned actions are applied via `Do`; observers ⊥ act. ⊥ build TickState more than once per (tick,intra) — share across consumers of the same cadence.
 - V25: ONE canonical type per concept — ⊥ redundant parallel structs/consts. character = `CharacterState` (snapshot AND predicted; ⊥ separate `PredictedCharacter` type). sim char = `physics.Core` (convert only at seed/extract). position: `physics.Vec2` (sim float) ↔ int X/Y (wire/snap) at ONE conversion site. input: `packet.PlayerInput` (wire/Action) ↔ `physics.Input` (sim) via single `inputToPhysics`. weapon ids: `packet.Weapon` is source; `physics` mirror = SOLE documented exception (layer isolation, ⊥ packet import), ⊥ any further dup. tuning: `physics.Tuning` canonical, `EventTuneParams.Raw` = wire form decoded once. new code ! reuse canonical, ⊥ reinvent.
 - V26: `MapView` spans the COMPLETE local map (downloaded/cached), ⊥ limited to snapshot-visible region. out-of-bounds tile query → `Solid` (world border, matches collision). `Window` crops a FIXED-size chunk at any center, OOB padded Solid.
 - V27: ML observation window FIXED-size ∀ ticks (constant ML input shape) — config W×H tiles (default square), ego-centric on predicted self, OOB padded Solid, multi-channel (static map planes + dynamic entity planes). ⊥ variable-size or visible-only crop. ⊥ rebuild map collision per tick (map static — query the one MapView).
@@ -310,8 +313,8 @@ T11|x|tests: own converges (≤rounding), others bounded-err, drift-free N ticks
 T12|x|unified Action type (input/chat/whisper/emoticon/kill/vote/callvote/setteam/spectate) + c.Do(Action) → net6 & net7 send|V18,V22,I.consumer
 T13|x|TickState observation struct: predicted local+all chars, projectiles, lasers/pickups/flags, tuning, game/race, events-since-tick|V19,I.consumer
 T14|x|MapView: WHOLE-map queries — ALL layers (Solid/Unhook/HookThrough/Death/Freeze/Tele/Speedup/Switch) + TuneZone(tx,ty), OOB→Solid + Window crop, from twmap LayerKind{Game,Front,Tele,Speedup,Switch,Tune}|V19,V26,V28,I.mapview
-T15|x|Frontend interface {Mode()TickMode; OnTick(*Client,TickState)[]Action} + WithFrontend/SetFrontend; same plug UI/ML-train/ML-exec|V18,V20,V24,I.consumer
-T16|.|tick driver: ONE buildTickState(tick); TickModeFixed loop per predicted tick + TickModeFrame loop (IntraTick+SmoothedCharacters overlay); call OnTick, apply []Action via c.Do|V19,V20,V21,V24,I.consumer
+T15|x|Observer (many, view-only) + Controller (one, view+action) interfaces; AddObserver→remove, SetController/WithController|V18,V20,V31,I.consumer
+T16|x|tick driver: ONE buildTickState per (tick,intra) shared across consumers; dispatch to all observers + controller by Mode; apply controller []Action via Do|V19,V20,V21,V24,V31,I.consumer
 T17|.|tests: Action↔send both protocols; TickState complete; both cadences share builder; one Frontend serves UI+ML plugs; MapView tiles + Window crop correct|V18,V19,V20,V22,V24
 T19|x|consolidate redundant types: canonical CharacterState/Vec2/PlayerInput/Weapon/Tuning + single conversion sites; audit & remove dup impls; ⊥ phantom PredictedCharacter|V25
 T20|.|ML observation: ego-centric FIXED multi-channel window — ALL static planes (collision+freeze+death+tele+speedup+switch+tune-zone) + per-tile tuning planes (TuningAt per cell) + ALL dynamic entity planes + agent scalars (weapon/hp/vel/hook/active-tuning/tune-zone); config size, square default, OOB=Solid|V26,V27,V28,V30,I.mapview,I.consumer
