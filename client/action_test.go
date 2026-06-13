@@ -19,13 +19,14 @@ type stubSession struct {
 	vote     bool
 	callVote [3]string
 	chatMsg  string
+	closes   int
 }
 
 func (s *stubSession) Login(context.Context, string, string, ...packet.LoginOption) error {
 	return nil
 }
 func (s *stubSession) Capabilities() packet.ServerCapabilities         { return packet.ServerCapabilities{} }
-func (s *stubSession) Close() error                                    { return nil }
+func (s *stubSession) Close() error                                    { s.closes++; return nil }
 func (s *stubSession) StartReader(context.Context)                     {}
 func (s *stubSession) EventCh() <-chan packet.Event                    { return nil }
 func (s *stubSession) DownloadMap(context.Context) (*twmap.Map, error) { return nil, nil }
