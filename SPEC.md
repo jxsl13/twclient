@@ -2,7 +2,7 @@
 
 ## §G — goal
 
-Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven `Frontend` interface serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept).
+Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven consumer path (`Observer` view-only + single `Controller` view+action) serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept).
 
 ## §C — constraints
 
@@ -17,20 +17,20 @@ Client exposes callback registration for server events (chat, whisper, server ms
 ### callback API (Client)
 per-event `OnX`. handler ! receive `*Client` first param → response logic inline. Returns unregister closure.
 ```
-register: func (c *Client) OnChat(fn func(*Client, ChatEvent))       → func() // unregister
-register: func (c *Client) OnWhisper(fn func(*Client, WhisperEvent)) → func()
-register: func (c *Client) OnBroadcast(fn func(*Client, BroadcastEvent)) → func()
-register: func (c *Client) OnServerMsg(fn func(*Client, ServerMsgEvent)) → func()
-register: func (c *Client) OnVoteSet(fn func(*Client, VoteSetEvent)) → func()
-register: func (c *Client) OnVoteStatus(fn func(*Client, VoteStatusEvent)) → func()
-register: func (c *Client) OnKill(fn func(*Client, KillEvent)) → func()
-register: func (c *Client) OnEmoticon(fn func(*Client, EmoticonEvent)) → func()
-register: func (c *Client) OnHookedBy(fn func(*Client, HookedByEvent)) → func()
-register: func (c *Client) OnWeaponChange(fn func(*Client, WeaponChangeEvent)) → func()
+register: func (c *Client) OnChat(fn func(*Client, packet.EventChat))       → func() // unregister
+register: func (c *Client) OnWhisper(fn func(*Client, packet.EventWhisper)) → func()
+register: func (c *Client) OnBroadcast(fn func(*Client, packet.EventBroadcast)) → func()
+register: func (c *Client) OnServerMsg(fn func(*Client, packet.EventServerMsg)) → func()
+register: func (c *Client) OnVoteSet(fn func(*Client, packet.EventVoteSet)) → func()
+register: func (c *Client) OnVoteStatus(fn func(*Client, packet.EventVoteStatus)) → func()
+register: func (c *Client) OnKill(fn func(*Client, packet.EventKill)) → func()
+register: func (c *Client) OnEmoticon(fn func(*Client, packet.EventEmoticon)) → func()
+register: func (c *Client) OnHookedBy(fn func(*Client, packet.EventHookedBy)) → func()
+register: func (c *Client) OnWeaponChange(fn func(*Client, packet.EventWeaponChange)) → func()
 ```
-ex: `c.OnChat(func(c *Client, e ChatEvent){ c.SendChat("re: "+e.Msg) })`
+ex: `c.OnChat(func(c *Client, e packet.EventChat){ c.SendChat("re: "+e.Msg) })`
 
-`OnX` registrar per event in §I.catalog (presence/motion/transient/game). same shape: `func(*Client, XEvent) → func()`.
+`OnX` registrar per event in §I.catalog (presence/motion/transient/game). same shape: `func(*Client, packet.EventX) → func()` (event structs live in `packet`, C4).
 
 ### event catalog — DDNet research (task 2)
 
@@ -209,8 +209,9 @@ dual cadence (V24) — each consumer declares mode; ONE driver loop dispatches t
 clean impl: ONE canonical builder `buildTickState(tick) TickState` (IntraTick=0). build once per
   (tick,intra) and share across all consumers of that cadence. frame overlays SmoothedCharacters(intra)
   + IntraTick. ⊥ duplicate state-assembly. observers get state; controller also returns actions → Do.
-plug: `type Frontend interface { Mode() TickMode; OnTick(*Client, TickState) []Action }`. one builder,
-  two thin loops. headless/ML & UI share everything except the cadence wrapper.
+plug: two role interfaces (V20), NOT one Frontend — `Observer{ Mode() TickMode; Observe(*Client, TickState) }`
+  (view-only, many) + `Controller{ Mode() TickMode; OnTick(*Client, TickState) []Action }` (view+action, one).
+  `RunFrontends(ctx)` = one builder, two thin loops; headless/ML & UI share everything except cadence wrapper.
 ```
 
 ### MapView — environment / collision observation (T14)
@@ -221,6 +222,7 @@ api:  Width, Height int                       // full-map tile bounds
 api:  Tile(tx,ty int) TileClass               // Air|Solid|Unhook|HookThrough|Death|Freeze|Tele|Speedup|Switch|Tune|...
 api:  Solid/Unhook/HookThrough/Death/Freeze/Tele/Speedup/Switch(tx,ty) bool   // OOB → Solid
 api:  TuneZone(tx,ty int) int                 // tune-zone index from map Tune layer (0=default); drives position tuning (V29)
+api:  IsDDRace() bool                          // map has DDRace features (tele/speedup/switch/tune layer or freeze tile); selects WorldConfig (V10b)
 api:  Window(cx,cy,halfW,halfH int) []TileClass            // fixed (2halfW+1)×(2halfH+1) crop centered (cx,cy); OOB padded Solid
 src:  twmap LayerKind {Game,Front,Tele,Speedup,Switch,Tune} (no new decode — twmap already parses these)
 ```
@@ -265,7 +267,7 @@ scalars (per-tick, appended to obs):
 - V12: snap-derived events need prev + cur full-snap char map. `SnapStorage` ! hold `map[cid]CharacterState` (all players, not just localCID) + prev copy. diff computed in `EventSnapshot` handler under `c.mu`, dispatched after unlock (V2).
 - V13: presence events edge-triggered: enter/leave fire once on set-membership change, ⊥ repeat each snap while present. throttle `E_player_move` (? min px delta) to avoid per-tick flood.
 - V14: transient-obj events (explosion/death/spawn/hammerhit) fire once per snap they appear; ⊥ dedup across snaps (objs already one-tick). map snap obj → event in same `EventSnapshot` pass.
-- V15: whisper unified — ∀ source → identical `WhisperEvent{FromID,ToID,Msg}`. sources: 0.6 DDNet `Sv_Chat m_Team`∈{TEAM_WHISPER_SEND,TEAM_WHISPER_RECV} (≥2); 0.7 `Sv_Chat m_Mode==CHAT_WHISPER`. (vanilla 0.6 teeworlds: none — DDNet adds via m_Team.) consumer ⊥ see protocol diff.
+- V15: whisper unified — ∀ source → identical `packet.EventWhisper{FromID,ToID,Msg}`. sources: 0.6 DDNet `Sv_Chat m_Team`∈{TEAM_WHISPER_SEND,TEAM_WHISPER_RECV} (≥2); 0.7 `Sv_Chat m_Mode==CHAT_WHISPER`. (vanilla 0.6 teeworlds: none — DDNet adds via m_Team.) consumer ⊥ see protocol diff.
 - V15a: 0.7 obj-as-message normalize — 0.7 `Sv_ClientInfo`/`Sv_ClientDrop`/`Sv_SkinChange`/`Sv_Team`/`Sv_GameInfo` carry data that in 0.6 lives in snap OBJECTS (ClientInfo/GameInfo). reader maps BOTH → same event (E_player_join/leave/skin_change/team_set/game_info). ref `sixup_translate_game.cpp`. test: join fires on 0.6 & 0.7.
 - V16: full event scope — ∀ §I.catalog rows (vanilla + DDNet-ext + snap-derived A/B/C/D/E) implemented. ⊥ silent skip; unimpl → explicit `?`-flagged + §T row.
 - V17: protocol-unified events (generalizes V15 to whole catalog). ONE event struct per logical event, defined once (`packet`). net6 & net7 readers both emit it. consumer/callback code ⊥ branch on `version`, ⊥ see net6/net7 types. event present in only 1 protocol → documented version-only in §I + `?`. snap-derived events identical (snap format shared post-decode). test: same handler fires on both 0.6 & 0.7 server for shared events.
@@ -288,7 +290,7 @@ scalars (per-tick, appended to obs):
 ```
 id|status|task|cites
 T2|x|research ddnet server events → §I event catalog finalized (this doc); whisper resolved V15|I.catalog
-T3|x|define event structs (ChatEvent…WeaponChangeEvent) impl packet.Event|V1,V4,I.catalog
+T3|x|define event structs (packet.EventChat…EventWeaponChange) impl packet.Event|V1,V4,I.catalog
 T4|x|parse msg-derived events in net6/reader.go processPayload switch + net7 equiv → SendEvent|V1,V4,V15,C5
 T4a|x|DDNet-ext msg (NETMSGTYPE_EX UUID) decode: teamsstate, killmsgteam, yourvote, racefinish, record, commandinfo(+group), votegroup, changeinfocooldown, myownmsg, mapsoundglobal → events|V4,V16,I.catalog
 T4d|x|0.7 obj-as-msg unify: Sv_ClientInfo/ClientDrop/SkinChange/Team/GameInfo/GameMsg/ServerSettings → E_player_join/leave/skin_change/team_set/game_info/game_msg/server_settings; map to 0.6 snap-obj source|V15a,V17,I.catalog
@@ -320,8 +322,8 @@ T19|x|consolidate redundant types: canonical CharacterState/Vec2/PlayerInput/Wea
 T20|x|ML observation: ego-centric FIXED multi-channel window — ALL static planes (collision+freeze+death+tele+speedup+switch+tune-zone) + per-tile tuning planes (TuningAt per cell) + ALL dynamic entity planes + agent scalars (weapon/hp/vel/hook/active-tuning/tune-zone); config size, square default, OOB=Solid|V26,V27,V28,V30,I.mapview,I.consumer
 T21|x|position-dependent tuning: per-tune-zone tuning store; Client.TuningAt(tx,ty) over any tile/window; ActiveTuning; default←Sv_TuneParams; feed predicted world per char's zone; expose in TickState|V29,V30,V9b,I.consumer
 ```
-order: done = T2–T10, T11. active: T19 (consolidate) + T10a (smoothing) + T12–T17, T20, T21.
-build order: T19 (consolidate first) → T14 (mapview+layers+window) → T21 (position tuning) → T13 (tickstate) → T12 (actions) → T10a (smoothing) → T15 (frontend) → T16 (driver) → T20 (ML obs) → T17 (tests).
+order: ALL DONE — T2–T21 = x. no active rows. spec fully built.
+build order (completed): T19 (consolidate first) → T14 (mapview+layers+window) → T21 (position tuning) → T13 (tickstate) → T12 (actions) → T10a (smoothing) → T15 (frontend) → T16 (driver) → T20 (ML obs) → T17 (tests).
 
 ## §R — research refs (verified sources)
 
@@ -330,6 +332,161 @@ catalog + prediction verified against pulled sources:
 - Teeworlds 0.7 `github.com/teeworlds/teeworlds@5d68273` (master=0.7, cloned 2026-06-12). 0.7 msg truth `datasrc/network.py`: `Sv_Chat{m_Mode,m_ClientID,m_TargetID,m_pMessage}`, `Sv_Team`, `Sv_ClientInfo/ClientDrop/SkinChange/GameInfo/GameMsg/ServerSettings/RaceFinish/Checkpoint`.
 - local: `net6/constants.go`, `net6/reader.go`, `client/snap.go`, `packet/event.go`.
 
+## §A — architecture (ref, ex-docs/ARCHITECTURE.md)
+
+twclient = headless Teeworlds/DDNet client lib, Go, module `github.com/jxsl13/twclient`. impl 0.6 (DDNet variant) + 0.7 from scratch: packet headers, chunk frames, varint msgs, delta snaps, handshake incl TKEN token. consumers under `cmd/` (gitignored test/training harness, ⊥ shipped) — own docs in `cmd/*/docs/`.
+
+dep direction (strict downward):
+```
+client/ → net6/,net7/ → network/,packer/ → packet/
+```
+- `packet/` — foundation, imports NOTHING internal. types: `Token`, `ChunkHeader`, `Snapshot`/`SnapItem`/`SnapStorage`, `PlayerInput`, `Direction`/`JumpState`/`HookState`/`Weapon`, `Event` iface, `MapInfo`/`MapCache`. fns: `UnpackChunks`, `CountVitalChunks`/`ContainsSysMsg`/`ContainsGameMsg`, `PackMsgID`/`PackInt`/`PackStr`, physics consts, coord/tile conv. INVARIANT: ⊥ import other internal pkgs; version-specific logic ⊂ net6/net7.
+- `packer/` — varint+string wrap over `github.com/teeworlds-go/varint`. `Unpacker`, `PackInt`/`PackStr`/`PackMsgID`. `CalculateUUID` (DDNet ext-msg UUID v3).
+- `network/` — UDP transport. `Conn` wraps `net.UDPConn`: `Dial`/`SendRaw`/`RecvContext`. INVARIANT: ⊥ know protocol versions, moves raw bytes only.
+- `net6/` — 0.6.4 + DDNet TKEN. consts `Split=4`, `NetVersion="0.6 626fce9a778df4d4"`, `DDNetVersion=19070`. types `Header`(3B/7B), `Flags`, `Session`. builders `BuildConnect`/`BuildInfoPacket`/`BuildReadyPacket`/`BuildEnterGamePacket`/`BuildStartInfoPacket`. snap sizes `snap.go`. INVARIANT: ⊥ depend on `client/` (flows other way).
+- `net7/` — 0.7. like net6 but `Split=6`, 7B header (always token), diff msg ids, native race msgs (`MsgGameSvRaceFinish`/`MsgGameSvCheckpoint`).
+- `client/` — protocol-agnostic API wrapping net6/net7 Session. types `Client`, `Session` iface (`Login`/`Close`/`StartReader`/`EventCh`/`Poll`/`SendInput`/`SendChat`/`SendKill`/`DownloadMap`/`Map`/`SetMap`), `SnapStorage`(`CharacterState`,`GameInfoState`), `PredictedTime`, `RaceTime`. INVARIANT: API boundary — consumers talk ONLY to `client.Client`, never net6/net7 direct.
+
+data flow: `network.Conn.RecvContext` → `net6.Session` bg reader (unpack header,ack,decompress,chunks) → `processMessage` → `packet.Event` on eventCh → `client.Client` event loop (extract CharacterState/GameInfoState, update PredictedTime) → consumer reads `Character()`/`RaceTime()`/`LastSnapTick()` → `client.SendInput()`.
+
+concurrency: each Session = bg reader goroutine (ack/seq mutex, mapInfo/state RWMutex). `client.Client` = bg event-loop goroutine (snap RWMutex, accessors thread-safe). `MapCache` mutex-safe (dedup downloads).
+tick rate: 50/s (20ms). PredictedTime advances from last acked tick.
+deps: `github.com/jxsl13/twmap` (map parse), `github.com/teeworlds-go/huffman/v2` (compress), `github.com/teeworlds-go/varint` (varint).
+test: `go build ./...`; `go test ./... -v`; `TW_TARGET=localhost:8303 go test ./client -run TestLogin06 -v`; `go test ./client -fuzz FuzzPostHandshakeChunks -fuzztime 30s`.
+
+## §P — wire protocol (ref, ex-docs/PROTOCOL.md)
+
+src: chillerdragon 0.6 docs, DDNet `network.{h,cpp}`/`network_conn.cpp`, teeworlds-go/protocol. input semantics → §X.
+
+packet: UDP ≤1400B. header 3B (DDNet/0.6.4) | 7B (vanilla 0.6.5 token flag). control pkt = header+1 ctrl msg, NumChunks=0, NEVER compressed. game/sys = header+N chunks, may huffman. DDNet token = 4B appended AFTER all chunk data (⊥ in header), before compression.
+header wire (DDNet `SendPacket`):
+```c
+aBuffer[0] = ((m_Flags << 2) & 0xfc) | ((m_Ack >> 8) & 0x3);
+aBuffer[1] = m_Ack & 0xff;
+aBuffer[2] = m_NumChunks;
+```
+header layout: bits — flags(5..1), ack 10bit (b0 bits1:0 + byte1), NumChunks 8bit (byte2). 0.6.5 adds 4B token after.
+flag bits (byte0): 5=Compression, 4=Resend, 3=Connless, 2=Control, 1=Token(0.6.5 only, ⊥ DDNet), 0=Unused(DDNet→0.7/Sixup detect).
+```c
+NET_PACKETFLAG_UNUSED=1<<0; TOKEN=1<<1; CONTROL=1<<2; CONNLESS=1<<3; RESEND=1<<4; COMPRESSION=1<<5;
+```
+DDNet TKEN: 0.6.4-based, ⊥ 0.6.5 header flag. appends 4B sec-token to END of payload (`WriteSecurityToken(chunkData+DataSize)`), stripped on recv (`DataSize -= sizeof(token)`), verify at `chunkData[DataSize]`.
+
+chunk header (Split=4 for 0.6, Split=6 for 0.7): non-vital 2B, vital 3B(+seq). flags: bit0=Vital, bit1=Resend. size 10bit → max payload 1023B. seq 10bit → wrap 1024 (`NET_MAX_SEQUENCE`). pack:
+```c
+pData[0] = ((m_Flags & 3) << 6) | ((m_Size >> Split) & 0x3f);
+pData[1] = (m_Size & ((1 << Split) - 1));
+if(VITAL){ pData[1] |= (m_Sequence >> 2) & (~((1<<Split)-1)); pData[2] = m_Sequence & 0xff; }
+```
+msg id varint: `packed_id = (msg_id << 1) | system_flag` (sys=1 system, 0 game).
+varint: `ESDDDDDD EDDDDDDD…` — E(b7)=more, S(b6 first byte)=sign, D=data. byte0=6 data bits, rest 7. little-endian. neg = one's complement (XOR -1).
+
+handshake DDNet (0.6.4+TKEN): C→CONNECT(ctrl 0x01, payload `"TKEN"(4)+ClientToken(4)+pad(504)`=512 anti-reflection) → S→CONNECTACCEPT(0x02, `"TKEN"(4)+SecurityToken(4)`) → C extract token payload[5:9] → C→ACCEPT(0x03 empty). then login (all pkts append token): C→INFO(sys1, version+pw) → S→MAP_CHANGE(sys2) → C→READY(sys14) → S→(MOTD+ServerSettings+CON_READY 3 chunks) → C→CL_STARTINFO(game20) → C→ENTERGAME(sys15) → S→SV_VOTE* → S→SV_READYTOENTER(game8) → snaps begin.
+vanilla 0.6.5: token in 7B header (CONNECT token=0xFFFFFFFF, CONNECTACCEPT ServerToken in payload), NO ACCEPT step, state→ONLINE direct. KEY diff: DDNet 3B header + appended TKEN + extra ACCEPT; vanilla 7B header token.
+
+control msgs (0.6): NumChunks=0, never compressed, payload=`[ctrl_id(1B)]+[extra]`.
+```
+0x00 KEEPALIVE both (none) | 0x01 CONNECT C `"TKEN"(4)+ClientToken(4)+pad(504)`=512 | 0x02 CONNECTACCEPT S `"TKEN"(4)+SecurityToken(4)`=8 | 0x03 ACCEPT C(DDNet,removed vanilla) (none) | 0x04 CLOSE both opt null-term reason
+```
+system msgs (0.6) — id|name|dir|payload:
+```
+1 INFO C→S String(version)+String(password)               | 2 MAP_CHANGE S→C String(map)+Int(crc)+Int(size)
+3 MAP_DATA S→C Int(last)+Int(crc)+Int(chunk)+Int(chunkSize)+Raw(data)
+4 CON_READY S→C (none)                                     | 5 SNAP S→C Int(tick)+Int(deltaTick)+Int(numParts)+Int(part)+Int(crc)+Int(partSize)+Raw
+6 SNAPEMPTY S→C Int(tick)+Int(deltaTick)                   | 7 SNAPSINGLE S→C Int(tick)+Int(deltaTick)+Int(crc)+Int(partSize)+Raw
+8 SNAPSMALL S→C (undocumented)                             | 9 INPUTTIMING S→C Int(intendedTick)+Int(timeLeft)
+10 RCON_AUTH_STATUS S→C Int(authed)+Int(cmdList)           | 11 RCON_LINE S→C String(line)
+12 AUTH_CHALLENGE / 13 AUTH_RESULT (unused)                | 14 READY C→S (none)
+15 ENTERGAME C→S (none)                                    | 16 INPUT C→S Int(ackTick)+Int(predTick)+Int(size)+[PlayerInput]
+17 RCON_CMD C→S String(command)                            | 18 RCON_AUTH C→S String(name)+String(password)+Int(sendRconCmds)
+19 REQUEST_MAP_DATA C→S Int(chunk)                         | 20 AUTH_START / 21 AUTH_RESPONSE (unused)
+22 PING / 23 PING_REPLY both (none)                        | 24 ERROR (unused)
+25 RCON_CMD_ADD S→C String(name)+String(help)+String(params) | 26 RCON_CMD_REM S→C String(name)
+```
+game msgs (0.6) — id|name|dir|payload:
+```
+1 SV_MOTD S→C String(msg)                | 2 SV_BROADCAST S→C String(msg)
+3 SV_CHAT S→C Int(team)+Int(clientID)+String(msg) | 4 SV_KILLMSG S→C Int(killer)+Int(victim)+Int(weapon)+Int(modeSpecial)
+5 SV_SOUNDGLOBAL S→C Int(soundID)        | 6 SV_TUNEPARAMS S→C Int×32
+7 SV_EXTRAPROJECTILE S→C (removed 2015)  | 8 SV_READYTOENTER S→C (none)
+9 SV_WEAPONPICKUP S→C Int(weapon)        | 10 SV_EMOTICON S→C Int(clientID)+Int(emoticon)
+11 SV_VOTECLEAROPTIONS S→C (none)        | 12 SV_VOTEOPTIONLISTADD S→C Int(numOptions)+String×15
+13 SV_VOTEOPTIONADD S→C String(desc)     | 14 SV_VOTEOPTIONREMOVE S→C String(desc)
+15 SV_VOTESET S→C Int(timeout)+String(desc)+String(reason) | 16 SV_VOTESTATUS S→C Int(yes)+Int(no)+Int(pass)+Int(total)
+17 CL_SAY C→S Int(team)+String(msg)      | 18 CL_SETTEAM C→S Int(team)
+19 CL_SETSPECTATORMODE C→S Int(spectatorID) | 20 CL_STARTINFO C→S String(name)+String(clan)+Int(country)+String(skin)+Int(useCustomColor)+Int(colorBody)+Int(colorFeet)
+21 CL_CHANGEINFO C→S (=CL_STARTINFO)     | 22 CL_KILL C→S (none)
+23 CL_EMOTICON C→S Int(emoticon)         | 24 CL_VOTE C→S Int(vote)
+25 CL_CALLVOTE C→S String(type)+String(value)+String(reason)
+```
+snap obj types (0.6) — id|name|fields:
+```
+1 PlayerInput Direction,TargetX,TargetY,Jump,Fire,Hook,PlayerFlags,WantedWeapon,NextWeapon,PrevWeapon
+2 Projectile X,Y,VelX,VelY,Type,StartTick     | 3 Laser X,Y,FromX,FromY,StartTick
+4 Pickup X,Y,Type,Subtype                      | 5 Flag X,Y,Team
+6 GameInfo GameFlags,GameStateFlags,RoundStartTick,WarmupTimer,ScoreLimit,TimeLimit,RoundNum,RoundCurrent
+7 GameData TeamscoreRed,TeamscoreBlue,FlagCarrierRed,FlagCarrierBlue
+8 CharacterCore Tick,X,Y,VelX,VelY,Angle,Direction,Jumped,HookedPlayer,HookState,HookTick,HookX,HookY,HookDx,HookDy
+9 Character CharacterCore+Health,Armor,AmmoCount,Weapon,Emote,AttackTick
+10 PlayerInfo Local,ClientID,Team,Score,Latency
+11 ClientInfo Name(4),Clan(3),Country,Skin(6),UseCustomColor,ColorBody,ColorFeet
+12 SpectatorInfo SpectatorID,X,Y
+```
+conn states (DDNet `EState`): `OFFLINE, WANT_TOKEN, CONNECT, PENDING, ONLINE, ERROR`. OFFLINE→CONNECT(Connect, sends CONNECT every 500ms)→PENDING(recv CONNECTACCEPT)→ONLINE(recv non-ctrl OR send ACCEPT)→ERROR(timeout/close)→OFFLINE(Reset).
+
+DDNet ext msgs (UUID): `NETMSG_EX` id=0 → wire `varint(1)=(0<<1)|1` + 16B UUID + payload. UUID = v3 MD5: `MD5(TEEWORLDS_NAMESPACE || name_without_NUL)`, namespace `e05ddaaa-c4e6-4cfb-b642-5d48e80c0029`, then version=3(byte6) variant=1(byte8). known:
+```
+WHATIS what-is@ddnet.tw both UUID(16) | ITIS it-is@ddnet.tw both UUID(16)+String(name) | IDONTKNOW i-dont-know@ddnet.tw both UUID(16)
+RCONTYPE rcon-type@ddnet.tw S→C Int(usernameRequired) | MAP_DETAILS map-details@ddnet.tw S→C String(map)+Raw(sha256,32)+Int(crc)+Int(size)+String(url)
+CAPABILITIES capabilities@ddnet.tw S→C Int(version)+Int(flags) | CLIENTVER clientver@ddnet.tw C→S UUID(connUUID,16)+Int(ddnetVersion)+String(versionStr)
+PINGEX ping@ddnet.tw both UUID(16) | PONGEX pong@ddnet.tw both UUID(16) | REDIRECT redirect@ddnet.org S→C Int(port) | RECONNECT reconnect@ddnet.org S→C (none)
+```
+CLIENTVER: sent BEFORE INFO at login. without it server treats client as vanilla 0.6 (no DDNet features/caps). wire: `varint(1)` + UUID of clientver (`8c001304-8461-3e47-8787-f672b3835bd4`) + 16B random conn UUID(v4) + `varint(DDNetVersion)` (e.g. 19070) + null-term version str.
+CAPABILITIES flags: 0=DDNET, 1=CHATTIMEOUTCODE, 2=ANYPLAYERFLAG, 3=PINGEX, 4=ALLOWDUMMY, 5=SYNCWEAPONINPUT.
+
+huffman: only non-control payloads compressible. flag in header. official TW freq table. sec-token appended BEFORE compression (token gets compressed too).
+
+constants: `NET_MAX_PACKETSIZE`=1400, `NET_MAX_PAYLOAD`=1394, `NET_PACKETHEADERSIZE`=3, `NET_MAX_SEQUENCE`=1024(10bit), `NET_MAX_CHUNK_SIZE`=1023(10bit), `NET_MAX_PACKET_CHUNKS`=255(8bit), `NET_TOKENREQUEST_DATASIZE`=512, `NET_SECURITY_TOKEN_UNKNOWN`=-1, `NET_SECURITY_TOKEN_UNSUPPORTED`=0, `SECURITY_TOKEN_MAGIC`=`{'T','K','E','N'}`, `NET_VERSION`(0.6)=`"0.6 626fce9a778df4d4"`, `NET_VERSION`(0.7)=`"0.7 802f1be60a05665f"`.
+snap delta note: updated items use SEPARATE type+id varints (⊥ packed key); size field only for unknown/extended item types (DDNet `snapshot.cpp`).
+
+## §X — input & physics (ref, ex-docs/INPUT.md)
+
+src: DDNet `gamecore.cpp`, `prediction/entities/character.cpp`, `gameclient.cpp`; chillerdragon; teeworlds-go/protocol.
+
+`CNetObj_PlayerInput` = 10 int fields, varint-sent:
+```c
+m_Direction;  // -1 left,0 stop,1 right
+m_TargetX; m_TargetY;  // cursor REL to tee (⊥ world coords). (0,0)→(0,-1). angle = atan2(TargetY,TargetX)*256
+m_Jump;       // 1 jump (ground/air),0 no
+m_Fire;       // bit0=state, bits1+=counter (parity flip = new shot)
+m_Hook;       // 1 active,0 release. dir from TargetX/Y
+m_PlayerFlags;// Playing,InMenu,Chatting,Scoreboard,AimOnMousepos
+m_WantedWeapon; // 1-6 (Hammer,Gun,Shotgun,Grenade,Laser,Ninja)
+m_NextWeapon; m_PrevWeapon; // scroll counters
+```
+direction: applies in `CCharacterCore::Tick` via SaturatedAdd. tuning defaults: GroundControlSpeed=10, GroundControlAccel=2, GroundFriction=0.5, AirControlSpeed=5, AirControlAccel=1.5, AirFriction=0.95.
+jump: bitfield `m_Jumped` (bit0=executed this frame, bit1=air jumps spent). MUST send 0→1 transition — holding 1 ⊥ retrigger (1→0→1 for air jump). impulses: GroundJumpImpulse=13.2, AirJumpImpulse=12.0. DDRace `m_Jumps`: -1 ground-only, 0 none, 1 one, 2 default(1+1); `m_EndlessJump` unlimited.
+hook FSM: `IDLE→(Hook=1)→FLYING→GRABBED→(Hook=0/Timeout)→RETRACTED→IDLE`. HookFireSpeed=80, HookLength=380, HookDragAccel=3.0 (upward stronger y*=0.3). timeout = `SERVER_TICK_SPEED*1.25` ≈62 ticks (1.25s). DDRace `m_EndlessHook` (HookTick=0 every tick); `TILE_NOHOOK` → RETRACT_START not GRABBED.
+weapon switch: `HandleWeaponSwitch` — Next/Prev counters skip unowned; direct `m_WantedWeapon` overrides (1-based→0-based); applied ONLY when `m_ReloadTimer==0` & ⊥ Ninja.
+fire: `CountInput(prev,cur).m_Presses>0`. FullAuto (Shotgun/Grenade/Laser) fires while `Fire&1`. counter: bit0=state, upper bits=changes; new shot when counter increased. trigger programmatically: `Fire=(Fire+1)|1` press (odd), `Fire=(Fire+1)&~1` release (even).
+fire delays (default tuning, ms/ticks@50): Hammer 125/~6, Gun 125/~6, Shotgun 500/25, Grenade 500/25, Laser 800/40, Ninja 800/40.
+
+NETMSG_INPUT (sys16): `AckGameTick + PredictionTick(=PredTick) + Size(40=10×4) + InputData[10]`. PredTick = GameTick + prediction latency (future). INPUTTIMING (sys9): `IntendedTick + TimeLeft(ms to server exec)` — TimeLeft>0 too early (slow down), <0 too late (speed up), ≈0 perfect. aim send ~`PREDICTION_MARGIN` ms before exec.
+
+physics tick (50/s):
+1. `CCharacterCore::Tick(UseInput)` — gravity `m_Vel.y += Gravity(0.5)`; ground check `IsOnGround`; read dir; angle; jump(§); hook(§); movement SaturatedAdd; TickDeferred (player collisions, vel clamp max 6000).
+2. `Move()` — VelocityRamp; MoveBox (world collide); ground reset (Jumped&=~2, JumpedTotal=0); player collision.
+3. `Quantize()` — round floats→net ints; pos snap (exact reproducibility).
+velocity ramp: `if(Value<Start) 1.0; else 1.0/pow(Curvature,(Value-Start)/Range)`. defaults VelrampStart=550, Range=2000, Curvature=1.4.
+
+client prediction: `PredictedTime` — `PredTick = baseTick + elapsedTicks + 1` (+1 always 1 tick ahead) from last acked snap. loop: copy GameWorld → for tick GameTick+1..PredGameTick: fetch input, `OnDirectInput`(weapons/fire, edge via CountInput) + `OnPredictedInput`(move/jump/hook) + `GameWorld.Tick()` → store Predicted+PrevPredicted. input ring buffer 200 slots keyed by tick. smooth render: local `mix(PrevPredicted.Pos, Predicted.Pos, PredIntraGameTick)`; others `mix(Prev,Cur, IntraGameTick)`.
+
+DDRace physics:
+- freeze (`m_FreezeTime>0`): Direction=0, Jump=0, Hook=0 (except live freeze).
+- tile mods: Freeze/Unfreeze, EndlessHook, UnlimitedJumps, Solo(no player collide), Jetpack(gun=recoil), Speedup, TuneZones(per-area physics).
+- velocity units: pos 1unit=1px@zoom1; vel = units/tick, wire `VelX=vel.x×256` fixed-pt; tiles 32×32px; PhysicalSize=28px; TeeRadius=14px.
+- tee box 28×28 (`PhysicalSize()=28.0f`). `TestBox(Pos,Size)` corners `Pos±14`; `IsOnGround` checks `(Pos.x±14, Pos.y+14+5)` =19 below; player collision `dist<28`. tile triggers at tee CENTER `GetMapIndex(Pos)=Pos/32` (center overlap, ⊥ box edge).
+
 ## §B — bugs
 
 ```
@@ -337,4 +494,5 @@ id|date|cause|fix
 B1|2026-06-13|T4e assumed ext snap-objects need new decoder infra; feared blocked. premise WRONG: applyDelta already passes ext items through raw.|RESOLVED in T4e2: marker (type-0, id≥0x4000) carries UUID; ext obj uses type≥0x4000. deriveExt in client/snap.go maps marker UUID→type & decodes DDNetCharacter/Player/SpecChar/Finish. NO decoder change. T4e=DamageInd (vanilla) still valid split.
 B2|2026-06-13|T9b needs per-weapon curvature+speed (gun/shotgun); physics.Tuning only had grenade.|RESOLVED: added GunSpeed/Curvature(2200/1.25), ShotgunSpeed/Curvature(2750/1.25) to physics.Tuning (DDNet tuning.h) + Tuning.ProjectilePos (CalcPos formula). PredictedProjectiles() advances snapshot projectiles to predTick. laser = hitscan, no ballistic predict needed.
 B3|2026-06-13|T10a reconcile smoothing was render-only; headless client had no renderer → deferred as dead code.|REVERTED 2026-06-13: render/UI consumer + ML consumer now in scope (V21, T15 Frontend). smoothing needed for sub-tick render interpolation. T10a back to `.` (active). "revisit if render consumer added" condition now met.
+B4|2026-06-13|/check found V10b VIOLATE: T9 marked x but no WorldConfig anywhere — prediction was single global physics model, no vanilla≠DDRace split. DDRace freeze would (not) be predicted regardless of server type.|RESOLVED: added physics.WorldConfig{IsVanilla,IsDDRace,PredictWeapons,PredictFreeze,PredictTiles,PredictDDRace} + Default/DDRace presets. Core.SetWorldConfig gates freeze (Collision.Freeze predicate, freeze tile suppresses control) + weapons. Game-type from map: MapView.IsDDRace() = has tele/speedup/switch/tune layer OR freeze tile. predCfg derived once at map load, fed per-core in seedCore. Vanilla servers never predict freeze (V10b satisfied). Tests: freeze-only-on-ddrace, hook-release-on-freeze, weapons-gated, IsDDRace detection.
 ```

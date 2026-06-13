@@ -24,6 +24,23 @@ func buildTestMap() *twmap.Map {
 	return &twmap.Map{Groups: []twmap.Group{{Layers: []twmap.Layer{game, tune}}}}
 }
 
+// V10b: a map with DDRace features (freeze tiles / special layers) is detected
+// as DDRace; a plain vanilla map is not.
+func TestMapViewIsDDRace(t *testing.T) {
+	if !NewMapView(buildTestMap()).IsDDRace() {
+		t.Error("map with freeze tile + tune layer should be DDRace")
+	}
+
+	game := twmap.Layer{
+		Kind: twmap.LayerKindGame, Width: 2, Height: 1,
+		Tiles: []twmap.Tile{{ID: twmap.TileAir}, {ID: twmap.TileSolid}},
+	}
+	vanilla := &twmap.Map{Groups: []twmap.Group{{Layers: []twmap.Layer{game}}}}
+	if NewMapView(vanilla).IsDDRace() {
+		t.Error("plain air/solid map should be vanilla, not DDRace")
+	}
+}
+
 // V26/V28: MapView spans the whole map, all layers, OOB → solid.
 func TestMapViewLayers(t *testing.T) {
 	v := NewMapView(buildTestMap())

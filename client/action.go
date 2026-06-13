@@ -41,18 +41,18 @@ type ActCallVote struct {
 // ActSetTeam requests a team change.
 type ActSetTeam struct{ Team int }
 
-// ActSpectate sets the spectated client (-1 = free-view).
-type ActSpectate struct{ TargetID int }
+// ActSetSpectator sets the spectated client (-1 = free-view).
+type ActSetSpectator struct{ TargetID int }
 
-func (ActInput) actionTag()    {}
-func (ActChat) actionTag()     {}
-func (ActWhisper) actionTag()  {}
-func (ActEmoticon) actionTag() {}
-func (ActKill) actionTag()     {}
-func (ActVote) actionTag()     {}
-func (ActCallVote) actionTag() {}
-func (ActSetTeam) actionTag()  {}
-func (ActSpectate) actionTag() {}
+func (ActInput) actionTag()        {}
+func (ActChat) actionTag()         {}
+func (ActWhisper) actionTag()      {}
+func (ActEmoticon) actionTag()     {}
+func (ActKill) actionTag()         {}
+func (ActVote) actionTag()         {}
+func (ActCallVote) actionTag()     {}
+func (ActSetTeam) actionTag()      {}
+func (ActSetSpectator) actionTag() {}
 
 // sendInputDirect sends an input for the current predicted tick without the
 // per-tick-boundary throttle of SendInput. The tick driver (or a consumer)
@@ -90,7 +90,7 @@ func (c *Client) Do(a Action) error {
 		return c.sess.SendCallVote(act.Type, act.Value, act.Reason)
 	case ActSetTeam:
 		return c.sess.SendSetTeam(act.Team)
-	case ActSpectate:
+	case ActSetSpectator:
 		return c.sess.SendSpectate(act.TargetID)
 	default:
 		return nil

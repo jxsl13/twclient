@@ -34,6 +34,10 @@ func NewCollision(m *twmap.Map) *Collision {
 	col := &Collision{
 		Solid:  func(tx, ty int) bool { return twmap.IsSolid(at(tx, ty)) },
 		NoHook: func(tx, ty int) bool { return at(tx, ty) == twmap.TileUnhookable },
+		Freeze: func(tx, ty int) bool {
+			id := at(tx, ty)
+			return id == twmap.TileFreeze || id == twmap.TileDeepFreeze
+		},
 	}
 
 	// Front layer: hook-through tiles let the hook pass through solid tiles.

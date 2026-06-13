@@ -147,6 +147,22 @@ func (v *MapView) TuneZone(tx, ty int) int {
 	return int(v.tune[idx].Number)
 }
 
+// IsDDRace reports whether the map carries DDRace-only features: any of the
+// tele/speedup/switch/tune special layers, or a freeze tile in the game layer.
+// Vanilla maps have none of these. Drives the predicted-world physics config
+// (V10b).
+func (v *MapView) IsDDRace() bool {
+	if v.tele != nil || v.speedup != nil || v.switchT != nil || v.tune != nil {
+		return true
+	}
+	for _, t := range v.game {
+		if t.ID == twmap.TileFreeze || t.ID == twmap.TileDeepFreeze {
+			return true
+		}
+	}
+	return false
+}
+
 // Tile returns the primary class of a tile (most movement-relevant first), for
 // the observation crop. OOB → ClassSolid.
 func (v *MapView) Tile(tx, ty int) TileClass {

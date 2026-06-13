@@ -13,6 +13,7 @@ import (
 type PredictedWorld struct {
 	col      *physics.Collision
 	tun      physics.Tuning
+	cfg      physics.WorldConfig
 	cores    map[int]*physics.Core
 	seed     map[int]CharacterState
 	baseTick int
@@ -31,16 +32,17 @@ func (w *PredictedWorld) applyZoneTuning(core *physics.Core) {
 
 // newPredictedWorld seeds a predicted world from a snapshot's character map at
 // baseTick. col must be non-nil (built from the current map).
-func newPredictedWorld(col *physics.Collision, tun physics.Tuning, baseTick int, chars map[int]CharacterState) *PredictedWorld {
+func newPredictedWorld(col *physics.Collision, tun physics.Tuning, cfg physics.WorldConfig, baseTick int, chars map[int]CharacterState) *PredictedWorld {
 	w := &PredictedWorld{
 		col:      col,
 		tun:      tun,
+		cfg:      cfg,
 		cores:    make(map[int]*physics.Core, len(chars)),
 		seed:     make(map[int]CharacterState, len(chars)),
 		baseTick: baseTick,
 	}
 	for cid, ch := range chars {
-		w.cores[cid] = seedCore(col, tun, ch)
+		w.cores[cid] = seedCore(col, tun, cfg, ch)
 		w.seed[cid] = ch
 	}
 	return w
@@ -48,9 +50,10 @@ func newPredictedWorld(col *physics.Collision, tun physics.Tuning, baseTick int,
 
 // seedCore builds a physics core from a snapshot character state. Snapshot
 // positions are world units; velocity is stored fixed-point (x256).
-func seedCore(col *physics.Collision, tun physics.Tuning, ch CharacterState) *physics.Core {
+func seedCore(col *physics.Collision, tun physics.Tuning, cfg physics.WorldConfig, ch CharacterState) *physics.Core {
 	c := physics.NewCore(col, physics.Vec2{X: float32(ch.X), Y: float32(ch.Y)})
 	c.SetTuning(tun)
+	c.SetWorldConfig(cfg)
 	c.Vel = physics.Vec2{X: float32(ch.VelX) / 256, Y: float32(ch.VelY) / 256}
 	c.Direction = ch.Direction
 	c.Angle = ch.Angle
@@ -153,12 +156,19 @@ func (c *Client) reconcilePrediction() {
 		return
 	}
 
-	// Build the map collision lazily once the map is available.
+	// Build the map collision lazily once the map is available, and derive the
+	// world physics config (vanilla vs DDRace) from the map at the same time
+	// (V10b). Both depend only on the static map, so this happens once.
 	if c.predCol == nil {
 		if m := c.Map(); m != nil {
 			col := physics.NewCollision(m)
+			cfg := physics.DefaultWorldConfig()
+			if mv := c.MapView(); mv != nil && mv.IsDDRace() {
+				cfg = physics.DDRaceWorldConfig()
+			}
 			c.mu.Lock()
 			c.predCol = col
+			c.predCfg = cfg
 			c.mu.Unlock()
 		}
 	}
@@ -169,6 +179,7 @@ func (c *Client) reconcilePrediction() {
 
 	c.mu.Lock()
 	col := c.predCol
+	cfg := c.predCfg
 	tun := c.predTun
 	chars := c.snap.charactersCopy()
 	base := c.snap.lastTick
@@ -188,7 +199,7 @@ func (c *Client) reconcilePrediction() {
 		return
 	}
 
-	w := newPredictedWorld(col, tun, base, chars)
+	w := newPredictedWorld(col, tun, cfg, base, chars)
 	// Per-tile tuning via tune zones (V29), only when the map has tune data.
 	if mv != nil && zoneTun != nil {
 		w.tuneAt = func(tileX, tileY int) physics.Tuning {

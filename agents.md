@@ -1,11 +1,11 @@
 # twclient – Agent Instructions
 
 This project implements a Teeworlds 0.6/0.7 protocol client and ML training bot in Go.
-For codebase navigation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — it contains the package dependency graph, key types per package, data flow diagrams, and cross-cutting concerns.
+For codebase navigation, see [SPEC.md](SPEC.md) §A — package dependency graph, key types per package, data flow, and cross-cutting concerns.
 
 ## Key conventions
 
-- **Always** consult `docs/PROTOCOL.md` before implementing or modifying protocol logic.
+- **Always** consult [SPEC.md](SPEC.md) §P (wire protocol) before implementing or modifying protocol logic.
 - DDNet uses the **0.6.4-based** protocol with **TKEN security token extension** (not vanilla 0.6.5 header tokens).
 - Security tokens are **appended to packet payload**, not placed in the header.
 - Chunk header Split = 4 for 0.6, Split = 6 for 0.7.
@@ -14,8 +14,8 @@ For codebase navigation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — it
 
 ## Protocol Reference
 
-**Always** read [docs/PROTOCOL.md](docs/PROTOCOL.md) before any protocol work.
-It contains the authoritative Mermaid diagrams for:
+**Always** read [SPEC.md](SPEC.md) §P (wire protocol) before any protocol work.
+It contains the authoritative reference for:
 - Packet header layouts (0.6.4/DDNet vs 0.6.5 vs 0.7)
 - Chunk header bit packing (Split=4 for 0.6, Split=6 for 0.7)
 - Connection handshake sequences (DDNet TKEN vs vanilla 0.6.5)
@@ -25,7 +25,7 @@ It contains the authoritative Mermaid diagrams for:
 
 ## Protocol Definition Improvement Process
 
-The protocol definition in `docs/PROTOCOL.md` is a **living document**.
+[SPEC.md](SPEC.md) §P (wire protocol) is a **living reference**. Mutate it only via `/ck:spec`.
 Follow this process when discovering new information:
 
 ### Step 1: Identify discrepancy
@@ -44,12 +44,9 @@ When a test fails, a connection drops, or behavior differs from documentation:
 3. **teeworlds-go/protocol** (Go reference implementation for 0.7):
    - https://github.com/teeworlds-go/protocol
 
-### Step 3: Update docs/PROTOCOL.md
-- Fix the affected diagram or table
-- Add a row to the **Revision Log** at the bottom with:
-  - Date
-  - What changed
-  - Which source confirmed the correction
+### Step 3: Update SPEC.md §P (via `/ck:spec`)
+- Fix the affected table or layout in §P
+- Record the correction as a §B bug row (id, date, cause, fix) when it fixes a defect
 
 ### Step 4: Update implementation
 - Fix the corresponding Go code in `packet/`, `chunk/`, `net6/`, `net7/`, or `client/`
@@ -101,7 +98,7 @@ Before writing any helper function, constant, or utility from scratch, **search 
 - Varint encoding/decoding
 - Message packing utilities
 
-Run `grep -r "YourThing" packet/ replay/ client/` or use semantic search before creating a new function. Duplicating existing helpers leads to drift and bugs.
+Run `grep -r "YourThing" packet/ client/ net6/ net7/` or use semantic search before creating a new function. Duplicating existing helpers leads to drift and bugs.
 
 ```bash
 # Build everything

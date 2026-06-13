@@ -44,9 +44,11 @@ type Core struct {
 
 	col *Collision
 	tun Tuning
+	cfg WorldConfig
 }
 
-// NewCore creates a core at pos with default tuning and jumps.
+// NewCore creates a core at pos with default tuning, jumps, and the vanilla
+// world config (weapons predicted, no DDRace tile physics).
 func NewCore(col *Collision, pos Vec2) *Core {
 	return &Core{
 		Pos:       pos,
@@ -54,11 +56,22 @@ func NewCore(col *Collision, pos Vec2) *Core {
 		HookState: HookIdle,
 		col:       col,
 		tun:       DefaultTuning(),
+		cfg:       DefaultWorldConfig(),
 	}
 }
 
 // SetTuning overrides the physics tuning (e.g. for non-vanilla servers).
 func (c *Core) SetTuning(t Tuning) { c.tun = t }
+
+// SetWorldConfig selects which physics subsystems are simulated (vanilla vs
+// DDRace, V10b).
+func (c *Core) SetWorldConfig(cfg WorldConfig) { c.cfg = cfg }
+
+// Frozen reports whether the tee is currently standing on a freeze tile, which
+// only matters when the world config predicts freeze (DDRace).
+func (c *Core) Frozen() bool {
+	return c.cfg.PredictFreeze && c.col.Frozen(c.Pos.X, c.Pos.Y)
+}
 
 // Grounded reports whether the tee is standing on solid ground this tick,
 // using the same two foot probes as the server.
@@ -73,6 +86,17 @@ func (c *Core) Grounded() bool {
 // afterwards, or use Step to do both.
 func (c *Core) Tick(in Input) {
 	grounded := c.Grounded()
+
+	// Freeze tiles (DDRace) suppress all tee control: no movement, jump, hook,
+	// or fire while frozen. Gravity and existing velocity still apply, so the
+	// tee slides/falls. Gated by WorldConfig.PredictFreeze, so vanilla servers
+	// never predict freeze (V10b). The hook is released on entering freeze.
+	if c.Frozen() {
+		in.Direction = 0
+		in.Jump = false
+		in.Hook = false
+		in.FireGrenade = false
+	}
 
 	// Landing refreshes the air jump. The server resets this in Move() from
 	// MoveBox's grounded result; resetting from the start-of-tick ground
@@ -147,7 +171,7 @@ func (c *Core) Tick(in Input) {
 
 	// Grenades: fire on input edge, then advance in-flight projectiles and
 	// apply explosion impulses (rocket jumps).
-	if in.FireGrenade && !c.prevFire {
+	if c.cfg.PredictWeapons && in.FireGrenade && !c.prevFire {
 		d := targetDir
 		if d.X == 0 && d.Y == 0 {
 			d = Vec2{X: 1}

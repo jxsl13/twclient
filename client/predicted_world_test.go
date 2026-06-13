@@ -55,7 +55,7 @@ func TestPredictionAccessorsEnabled(t *testing.T) {
 
 	// Inject a predicted world with a moved local character.
 	col := openCollision()
-	c.predWorld = newPredictedWorld(col, physics.DefaultTuning(), 0,
+	c.predWorld = newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 0,
 		map[int]CharacterState{1: {X: 150}, 2: {X: 250}})
 
 	if got := c.PredictedCharacter(); got.X != 150 {
@@ -80,8 +80,8 @@ func TestSmoothedCharacters(t *testing.T) {
 	col := openCollision()
 	tun := physics.DefaultTuning()
 	c := &Client{predictEnabled: true}
-	c.prevPredWorld = newPredictedWorld(col, tun, 0, map[int]CharacterState{1: {X: 100, Y: 200}})
-	c.predWorld = newPredictedWorld(col, tun, 0, map[int]CharacterState{1: {X: 300, Y: 200}})
+	c.prevPredWorld = newPredictedWorld(col, tun, physics.DefaultWorldConfig(), 0, map[int]CharacterState{1: {X: 100, Y: 200}})
+	c.predWorld = newPredictedWorld(col, tun, physics.DefaultWorldConfig(), 0, map[int]CharacterState{1: {X: 300, Y: 200}})
 
 	// Midpoint: halfway between 100 and 300.
 	mid := c.SmoothedCharacters(0.5)
@@ -120,7 +120,7 @@ func TestPredictedWorldReSimDeterministic(t *testing.T) {
 		buf.record(tick, in)
 	}
 
-	w := newPredictedWorld(col, tun, base, map[int]CharacterState{1: seed})
+	w := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, map[int]CharacterState{1: seed})
 	w.advanceOwn(1, base+5, &buf)
 	got, ok := w.character(1)
 	if !ok {
@@ -128,7 +128,7 @@ func TestPredictedWorldReSimDeterministic(t *testing.T) {
 	}
 
 	// Reference: drive a fresh core the same way.
-	ref := seedCore(col, tun, seed)
+	ref := seedCore(col, tun, physics.DefaultWorldConfig(), seed)
 	for i := 0; i < 5; i++ {
 		ref.Step(inputToPhysics(in))
 	}
@@ -154,7 +154,7 @@ func TestPredictedWorldExtrapolateOthers(t *testing.T) {
 		2: {X: 2000, Y: 1000, Direction: 1}, // other, walking right
 		3: {X: 3000, Y: 1000, Direction: 0}, // other, standing
 	}
-	w := newPredictedWorld(col, tun, base, chars)
+	w := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, chars)
 	w.advanceOthers(1, base+10)
 
 	// Other player 2 walked right; player 3 stayed put (horizontally).
@@ -182,7 +182,7 @@ func TestPredictedWorldExtrapolateOthers(t *testing.T) {
 func TestPredictedWorldNoAdvance(t *testing.T) {
 	col := openCollision()
 	seed := CharacterState{X: 500, Y: 700}
-	w := newPredictedWorld(col, physics.DefaultTuning(), 50, map[int]CharacterState{2: seed})
+	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 50, map[int]CharacterState{2: seed})
 
 	var buf predInputBuffer
 	w.advanceOwn(2, 50, &buf) // predTick == baseTick
@@ -203,11 +203,11 @@ func TestPredictedWorldStopsAtGap(t *testing.T) {
 	buf.record(base+2, in)
 	// tick base+3 intentionally missing
 
-	w := newPredictedWorld(col, physics.DefaultTuning(), base, map[int]CharacterState{0: {X: 0, Y: 0}})
+	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), base, map[int]CharacterState{0: {X: 0, Y: 0}})
 	w.advanceOwn(0, base+5, &buf)
 	got, _ := w.character(0)
 
-	ref := seedCore(col, physics.DefaultTuning(), CharacterState{X: 0, Y: 0})
+	ref := seedCore(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), CharacterState{X: 0, Y: 0})
 	ref.Step(inputToPhysics(in))
 	ref.Step(inputToPhysics(in))
 	rx, _ := ref.QuantizedPos()

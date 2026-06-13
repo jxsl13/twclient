@@ -13,7 +13,7 @@ func TestPredictionConvergesToSnap(t *testing.T) {
 	col := openCollision()
 	snap := CharacterState{X: 1234, Y: 5678, VelX: 0, VelY: 0}
 
-	w := newPredictedWorld(col, physics.DefaultTuning(), 100, map[int]CharacterState{1: snap})
+	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 100, map[int]CharacterState{1: snap})
 	var buf predInputBuffer
 	w.advanceOwn(1, 110, &buf) // no inputs buffered -> no re-sim
 
@@ -40,14 +40,14 @@ func TestPredictionDriftFreeAcrossReseeds(t *testing.T) {
 	}
 
 	// First reconcile cycle.
-	w1 := newPredictedWorld(col, tun, base, map[int]CharacterState{1: snap})
+	w1 := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, map[int]CharacterState{1: snap})
 	w1.advanceOwn(1, base+8, &buf)
 	got1, _ := w1.character(1)
 
 	// Second cycle, re-seeded from the SAME authoritative snapshot. Because the
 	// world always starts from snapshot state, the outcome is identical — no
 	// drift carried from w1.
-	w2 := newPredictedWorld(col, tun, base, map[int]CharacterState{1: snap})
+	w2 := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, map[int]CharacterState{1: snap})
 	w2.advanceOwn(1, base+8, &buf)
 	got2, _ := w2.character(1)
 
@@ -61,7 +61,7 @@ func TestPredictionDriftFreeAcrossReseeds(t *testing.T) {
 func TestExtrapolationBounded(t *testing.T) {
 	col := openCollision()
 	seed := CharacterState{X: 5000, Y: 5000, Direction: 0}
-	w := newPredictedWorld(col, physics.DefaultTuning(), 0, map[int]CharacterState{2: seed})
+	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 0, map[int]CharacterState{2: seed})
 	w.advanceOthers(1, 10) // 10 ticks of extrapolation, player not moving
 
 	got, _ := w.character(2)

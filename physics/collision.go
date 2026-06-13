@@ -19,6 +19,10 @@ type Collision struct {
 	// it is solid (DDNet front-layer TILE_THROUGH_CUT / TILE_THROUGH_ALL).
 	// Movement collision is unaffected. May be nil.
 	HookThrough func(tx, ty int) bool
+	// Freeze reports whether the tile freezes the tee (TILE_FREEZE /
+	// TILE_DEEP_FREEZE). DDRace-only; nil on vanilla maps. The core consults
+	// it only when WorldConfig.PredictFreeze is set.
+	Freeze func(tx, ty int) bool
 }
 
 // roundToInt mirrors DDNet's round_to_int (round half away from zero).
@@ -47,6 +51,15 @@ func (c *Collision) checkNoHook(x, y float32) bool {
 		return false
 	}
 	return c.NoHook(tileOf(roundToInt(x)), tileOf(roundToInt(y)))
+}
+
+// Frozen reports whether the world point lies in a freeze tile. False when no
+// freeze layer is present (vanilla maps).
+func (c *Collision) Frozen(x, y float32) bool {
+	if c.Freeze == nil {
+		return false
+	}
+	return c.Freeze(tileOf(roundToInt(x)), tileOf(roundToInt(y)))
 }
 
 // TestBox reports whether an axis-aligned box of the given size centred at

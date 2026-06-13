@@ -1,12 +1,12 @@
 # twclient – Copilot Instructions
 
 This project implements a Teeworlds 0.6/0.7 protocol client and ML training bot in Go.
-The canonical protocol reference is in [docs/PROTOCOL.md](../docs/PROTOCOL.md).
-For codebase navigation, see [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) — it contains the package dependency graph, key types, data flow, and cross-cutting concerns.
+The canonical protocol reference is in [SPEC.md](../SPEC.md) §P (wire protocol).
+For codebase navigation, see [SPEC.md](../SPEC.md) §A — package dependency graph, key types, data flow, and cross-cutting concerns.
 
 ## Key conventions
 
-- **Always** consult `docs/PROTOCOL.md` before implementing or modifying protocol logic.
+- **Always** consult [SPEC.md](../SPEC.md) §P before implementing or modifying protocol logic.
 - DDNet uses the **0.6.4-based** protocol with **TKEN security token extension** (not vanilla 0.6.5 header tokens).
 - Security tokens are **appended to packet payload**, not placed in the header.
 - Chunk header Split = 4 for 0.6, Split = 6 for 0.7.
@@ -15,11 +15,11 @@ For codebase navigation, see [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) —
 
 ## Protocol improvement process
 
-The protocol definition in `docs/PROTOCOL.md` is a **living document**.
+[SPEC.md](../SPEC.md) §P (wire protocol) is a **living reference**. Mutate it only via `/ck:spec`.
 
 When working on protocol code:
 
-1. **Read** `docs/PROTOCOL.md` first for the current understanding.
+1. **Read** SPEC.md §P first for the current understanding.
 2. **Cross-reference** with (in priority order):
    1. **DDNet source code** (canonical for DDNet servers):
       - `src/engine/shared/network.h` — constants, flag bits, struct definitions
@@ -30,8 +30,8 @@ When working on protocol code:
       - https://chillerdragon.github.io/teeworlds-protocol/06/
    3. **teeworlds-go/protocol** (Go reference implementation for 0.7):
       - https://github.com/teeworlds-go/protocol
-3. **Update** `docs/PROTOCOL.md` if you discover discrepancies.
-4. **Document** the source of each correction in the revision log at the bottom.
+3. **Update** SPEC.md §P via `/ck:spec` if you discover discrepancies.
+4. **Record** each defect correction as a §B bug row (id, date, cause, fix).
 
 ## Key gotchas
 
@@ -66,7 +66,7 @@ Before writing any helper function, constant, or utility from scratch, **search 
 - Varint encoding/decoding
 - Message packing utilities
 
-Run `grep -r "YourThing" packet/ replay/ client/` or use semantic search before creating a new function.
+Run `grep -r "YourThing" packet/ client/ net6/ net7/` or use semantic search before creating a new function.
 
 ## Development commands
 

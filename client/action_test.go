@@ -71,7 +71,7 @@ func TestDoDispatch(t *testing.T) {
 		{ActVote{Approve: true}, "vote"},
 		{ActCallVote{Type: "kick", Value: "2"}, "callVote"},
 		{ActSetTeam{Team: 1}, "setTeam"},
-		{ActSpectate{TargetID: 5}, "spectate"},
+		{ActSetSpectator{TargetID: 5}, "spectate"},
 	}
 	for _, tc := range cases {
 		s.lastCall = ""
@@ -88,7 +88,7 @@ func TestDoDispatch(t *testing.T) {
 	if s.whisperT != 7 {
 		t.Errorf("whisper target not passed: %d", s.whisperT)
 	}
-	_ = c.Do(ActSpectate{TargetID: 9})
+	_ = c.Do(ActSetSpectator{TargetID: 9})
 	if s.spectate != 9 {
 		t.Errorf("spectate target not passed: %d", s.spectate)
 	}

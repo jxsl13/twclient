@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/jxsl13/twclient/packet"
+	"github.com/jxsl13/twclient/physics"
 	"github.com/jxsl13/twmap"
 )
 
@@ -62,8 +63,8 @@ func TestFrameStateOverlaysSmoothing(t *testing.T) {
 	col := openCollision()
 	tun := tuningFromRaw(nil)
 	c.predictEnabled = true
-	c.prevPredWorld = newPredictedWorld(col, tun, 0, map[int]CharacterState{1: {X: 0, Y: 0}})
-	c.predWorld = newPredictedWorld(col, tun, 0, map[int]CharacterState{1: {X: 100, Y: 0}})
+	c.prevPredWorld = newPredictedWorld(col, tun, physics.DefaultWorldConfig(), 0, map[int]CharacterState{1: {X: 0, Y: 0}})
+	c.predWorld = newPredictedWorld(col, tun, physics.DefaultWorldConfig(), 0, map[int]CharacterState{1: {X: 100, Y: 0}})
 
 	fixed := c.buildTickState()
 	if fixed.IntraTick != 0 {

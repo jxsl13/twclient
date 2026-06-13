@@ -93,6 +93,7 @@ type Client struct {
 	predWorld      *PredictedWorld
 	prevPredWorld  *PredictedWorld // previous tick's world, for render smoothing (V21)
 	predCol        *physics.Collision
+	predCfg        physics.WorldConfig // vanilla vs DDRace physics, from map (V10b)
 	predTun        physics.Tuning
 	tunings        map[int]physics.Tuning // per tune-zone (zone 0 = default), V29
 
@@ -201,6 +202,7 @@ func New(address string, opts ...Option) *Client {
 		mapCache: packet.NewMapCache(),
 		log:      slog.New(slog.DiscardHandler),
 		predTun:  physics.DefaultTuning(),
+		predCfg:  physics.DefaultWorldConfig(),
 	}
 	for _, opt := range opts {
 		opt(c)
