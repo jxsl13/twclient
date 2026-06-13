@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -188,12 +189,13 @@ func (s *Session) Handshake(ctx context.Context) error {
 	s.log.Debug("sending CONNECT",
 		"client_token", hex.EncodeToString(s.clientToken[:]),
 		"size", len(connectPkt))
-	if err := s.conn.SendRaw(connectPkt); err != nil {
+	sendConnect := func() error { return s.conn.SendRaw(connectPkt) }
+	if err := sendConnect(); err != nil {
 		return fmt.Errorf("session06: send connect: %w", err)
 	}
 
-	// Receive connect accept
-	resp, err := s.conn.RecvContext(ctx)
+	// Receive connect accept, resending CONNECT on loss (V68, B6).
+	resp, err := s.resendRecv(ctx, sendConnect)
 	if err != nil {
 		return fmt.Errorf("session06: recv connect accept: %w", err)
 	}
@@ -262,12 +264,14 @@ func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.L
 	infoMsg := SysInfo(NetVersion, cfg.Password)
 	infoChunk := WrapVitalChunk(infoMsg, s.NextSeq())
 	combined := append(clientVerChunk, infoChunk...)
-	if err := s.SendChunks(2, combined); err != nil {
+	// Resend the SAME INFO bytes (same seq) on loss — retransmission, ⊥ a new vital.
+	sendInfo := func() error { return s.SendChunks(2, combined) }
+	if err := sendInfo(); err != nil {
 		return fmt.Errorf("session06: send clientver+info: %w", err)
 	}
 
-	// Receive until MAP_CHANGE (server sends map info after INFO)
-	if err := s.recvUntilMapChange(ctx); err != nil {
+	// Receive until MAP_CHANGE (server sends map info after INFO); resend INFO on loss.
+	if err := s.recvUntilMapChange(ctx, sendInfo); err != nil {
 		return err
 	}
 	s.log.Debug("received MAP_CHANGE", "ack", s.ack)
@@ -275,12 +279,13 @@ func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.L
 	// Send ready (signals we have the map / don't need download)
 	s.log.Debug("sending READY", "seq", s.sequence+1)
 	readyChunk := WrapVitalChunk(SysReady(), s.NextSeq())
-	if err := s.SendChunks(1, readyChunk); err != nil {
+	sendReady := func() error { return s.SendChunks(1, readyChunk) }
+	if err := sendReady(); err != nil {
 		return fmt.Errorf("session06: send ready: %w", err)
 	}
 
-	// Receive until CON_READY
-	if err := s.recvUntilConReady(ctx); err != nil {
+	// Receive until CON_READY; resend READY on loss.
+	if err := s.recvUntilConReady(ctx, sendReady); err != nil {
 		return err
 	}
 	s.log.Debug("received CON_READY", "ack", s.ack)
@@ -437,6 +442,41 @@ func (s *Session) recvAndParsePayload(ctx context.Context) (Header, []byte, erro
 	return s.parsePayload(resp)
 }
 
+// loginResendInterval is how long Handshake/Login wait for the expected reply
+// before retransmitting the pending step (CONNECT / INFO / READY). Mirrors
+// DDNet CNetConnection::Update's resend timer; bounded by the overall connect
+// ctx deadline (V68, B6).
+const loginResendInterval = 500 * time.Millisecond
+
+// resendRecv waits up to one loginResendInterval for a packet. On interval
+// timeout it retransmits the pending step (resend) and retries, bounded by ctx.
+// Returns the raw packet, or ctx.Err() once the overall connect deadline
+// elapses; a non-timeout I/O error is returned as-is. This makes Login survive
+// packet loss instead of aborting on the first read timeout (V68, B6).
+func (s *Session) resendRecv(ctx context.Context, resend func() error) ([]byte, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rctx, cancel := context.WithTimeout(ctx, loginResendInterval)
+		resp, err := s.conn.RecvContext(rctx)
+		cancel()
+		if err == nil {
+			return resp, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err() // overall deadline / cancel → give up
+		}
+		if errors.Is(err, context.DeadlineExceeded) || packet.IsTimeout(err) {
+			if rerr := resend(); rerr != nil { // resend interval elapsed → retransmit
+				return nil, rerr
+			}
+			continue
+		}
+		return nil, err // genuine I/O error
+	}
+}
+
 // recvAndParsePayloadTimeout is like recvAndParsePayload but uses the given timeout.
 func (s *Session) recvAndParsePayloadTimeout(ctx context.Context, timeout time.Duration) (Header, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -483,16 +523,19 @@ func (s *Session) parsePayload(resp []byte) (Header, []byte, error) {
 // RecvUntilMapChange waits for a MAP_CHANGE system message, extracts
 // the map metadata, and stores it in the session.
 func (s *Session) RecvUntilMapChange(ctx context.Context) error {
-	return s.recvUntilMapChange(ctx)
+	return s.recvUntilMapChange(ctx, func() error { return nil })
 }
 
-func (s *Session) recvUntilMapChange(ctx context.Context) error {
-	for range 20 {
-		hdr, payload, err := s.recvAndParsePayload(ctx)
+// recvUntilMapChange waits for MAP_CHANGE, retransmitting the pending vital
+// (resend, the INFO chunk) on packet loss until the connect ctx deadline (V68).
+func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) error {
+	for {
+		resp, err := s.resendRecv(ctx, resend)
 		if err != nil {
 			return fmt.Errorf("session06: recv waiting for map_change: %w", err)
 		}
-		if payload == nil {
+		hdr, payload, perr := s.parsePayload(resp)
+		if perr != nil || payload == nil {
 			continue
 		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
@@ -512,16 +555,18 @@ func (s *Session) recvUntilMapChange(ctx context.Context) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("session06: did not receive MAP_CHANGE")
 }
 
-func (s *Session) recvUntilConReady(ctx context.Context) error {
-	for range 20 {
-		hdr, payload, err := s.recvAndParsePayload(ctx)
+// recvUntilConReady waits for CON_READY, retransmitting the pending vital
+// (resend, the READY chunk) on packet loss until the connect ctx deadline (V68).
+func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) error {
+	for {
+		resp, err := s.resendRecv(ctx, resend)
 		if err != nil {
 			return fmt.Errorf("session06: recv waiting for con_ready: %w", err)
 		}
-		if payload == nil {
+		hdr, payload, perr := s.parsePayload(resp)
+		if perr != nil || payload == nil {
 			continue
 		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
@@ -529,24 +574,6 @@ func (s *Session) recvUntilConReady(ctx context.Context) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("session06: did not receive CON_READY")
-}
-
-func (s *Session) recvUntilReadyToEnter(ctx context.Context) error {
-	for range 30 {
-		hdr, payload, err := s.recvAndParsePayload(ctx)
-		if err != nil {
-			return fmt.Errorf("session06: recv waiting for ready_to_enter: %w", err)
-		}
-		if payload == nil {
-			continue
-		}
-		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
-		if packet.ContainsGameMsg(payload, MsgGameSvReadyToEnter, Split) {
-			return nil
-		}
-	}
-	return fmt.Errorf("session06: did not receive SV_READYTOENTER")
 }
 
 // securityTokenFromBE reads a 4-byte big-endian security token.

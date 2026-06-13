@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -141,12 +142,13 @@ func (s *Session) Handshake(ctx context.Context) error {
 	s.log.Debug("sending TOKEN request",
 		"client_token", hex.EncodeToString(s.clientToken[:]),
 		"size", len(tokenReq))
-	if err := s.conn.SendRaw(tokenReq); err != nil {
+	sendTokenReq := func() error { return s.conn.SendRaw(tokenReq) }
+	if err := sendTokenReq(); err != nil {
 		return fmt.Errorf("session07: send token request: %w", err)
 	}
 
-	// Step 2: Receive token response
-	resp, err := s.conn.RecvContext(ctx)
+	// Step 2: Receive token response, resending the request on loss (V68, B6).
+	resp, err := s.resendRecv(ctx, sendTokenReq)
 	if err != nil {
 		return fmt.Errorf("session07: recv token response: %w", err)
 	}
@@ -169,12 +171,13 @@ func (s *Session) Handshake(ctx context.Context) error {
 	// Step 3: Send connect
 	connectPkt := BuildConnect(s.serverToken, s.clientToken)
 	s.log.Debug("sending CONNECT", "size", len(connectPkt))
-	if err := s.conn.SendRaw(connectPkt); err != nil {
+	sendConnect := func() error { return s.conn.SendRaw(connectPkt) }
+	if err := sendConnect(); err != nil {
 		return fmt.Errorf("session07: send connect: %w", err)
 	}
 
-	// Step 4: Receive accept
-	resp, err = s.conn.RecvContext(ctx)
+	// Step 4: Receive accept, resending CONNECT on loss (V68, B6).
+	resp, err = s.resendRecv(ctx, sendConnect)
 	if err != nil {
 		return fmt.Errorf("session07: recv accept: %w", err)
 	}
@@ -207,12 +210,14 @@ func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.L
 	s.log.Debug("sending INFO", "version", NetVersion)
 	infoMsg := SysInfo(NetVersion, cfg.Password)
 	infoChunk := WrapVitalChunk(infoMsg, s.NextSeq())
-	if err := s.SendChunks(1, infoChunk); err != nil {
+	// Resend the SAME INFO bytes (same seq) on loss — retransmission (V68, B6).
+	sendInfo := func() error { return s.SendChunks(1, infoChunk) }
+	if err := sendInfo(); err != nil {
 		return fmt.Errorf("session07: send info: %w", err)
 	}
 
-	// Receive until MAP_CHANGE (server sends capabilities + map info after INFO)
-	if err := s.recvUntilMapChange(ctx); err != nil {
+	// Receive until MAP_CHANGE (server sends capabilities + map info after INFO); resend INFO on loss.
+	if err := s.recvUntilMapChange(ctx, sendInfo); err != nil {
 		return err
 	}
 	s.log.Debug("received MAP_CHANGE", "ack", s.ack)
@@ -220,12 +225,13 @@ func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.L
 	// Send ready (signals we have the map / don't need download)
 	s.log.Debug("sending READY")
 	readyChunk := WrapVitalChunk(SysReady(), s.NextSeq())
-	if err := s.SendChunks(1, readyChunk); err != nil {
+	sendReady := func() error { return s.SendChunks(1, readyChunk) }
+	if err := sendReady(); err != nil {
 		return fmt.Errorf("session07: send ready: %w", err)
 	}
 
-	// Receive until CON_READY
-	if err := s.recvUntilConReady(ctx); err != nil {
+	// Receive until CON_READY; resend READY on loss.
+	if err := s.recvUntilConReady(ctx, sendReady); err != nil {
 		return err
 	}
 	s.log.Debug("received CON_READY", "ack", s.ack)
@@ -444,6 +450,39 @@ func (s *Session) recvAndParsePayload(ctx context.Context) (Header, []byte, erro
 	return s.parsePayload(resp)
 }
 
+// loginResendInterval is how long Handshake/Login wait for the expected reply
+// before retransmitting the pending step (token request / CONNECT / INFO /
+// READY). Mirrors DDNet CNetConnection::Update; bounded by the connect ctx (V68, B6).
+const loginResendInterval = 500 * time.Millisecond
+
+// resendRecv waits up to one loginResendInterval for a packet; on interval
+// timeout it retransmits the pending step and retries, bounded by ctx. Returns
+// the raw packet, ctx.Err() at the overall deadline, or a non-timeout I/O error
+// (V68, B6).
+func (s *Session) resendRecv(ctx context.Context, resend func() error) ([]byte, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rctx, cancel := context.WithTimeout(ctx, loginResendInterval)
+		resp, err := s.conn.RecvContext(rctx)
+		cancel()
+		if err == nil {
+			return resp, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) || packet.IsTimeout(err) {
+			if rerr := resend(); rerr != nil {
+				return nil, rerr
+			}
+			continue
+		}
+		return nil, err
+	}
+}
+
 func (s *Session) recvAndParsePayloadTimeout(ctx context.Context, timeout time.Duration) (Header, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -475,13 +514,16 @@ func (s *Session) parsePayload(resp []byte) (Header, []byte, error) {
 	return hdr, payload, nil
 }
 
-func (s *Session) recvUntilMapChange(ctx context.Context) error {
-	for range 20 {
-		hdr, payload, err := s.recvAndParsePayload(ctx)
+// recvUntilMapChange waits for MAP_CHANGE, retransmitting the pending INFO
+// vital (resend) on packet loss until the connect ctx deadline (V68, B6).
+func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) error {
+	for {
+		resp, err := s.resendRecv(ctx, resend)
 		if err != nil {
 			return fmt.Errorf("session07: recv waiting for map_change: %w", err)
 		}
-		if payload == nil {
+		hdr, payload, perr := s.parsePayload(resp)
+		if perr != nil || payload == nil {
 			continue
 		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
@@ -496,23 +538,25 @@ func (s *Session) recvUntilMapChange(ctx context.Context) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("session07: did not receive MAP_CHANGE")
 }
 
-func (s *Session) recvUntilConReady(ctx context.Context) error {
-	for range 20 {
-		hdr, payload, err := s.recvAndParsePayload(ctx)
+// recvUntilConReady waits for CON_READY, retransmitting the pending READY vital
+// (resend) on packet loss until the connect ctx deadline (V68, B6).
+func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) error {
+	for {
+		resp, err := s.resendRecv(ctx, resend)
 		if err != nil {
 			return fmt.Errorf("session07: recv waiting for con_ready: %w", err)
 		}
-		if payload == nil {
+		hdr, payload, perr := s.parsePayload(resp)
+		if perr != nil || payload == nil {
 			continue
 		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
 		if hdr.Flags.Control {
 			continue
 		}
-		// Parse MAP_CHANGE if present (server may sends it here on map reload)
+		// Parse MAP_CHANGE if present (server may send it here on map reload)
 		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
 			if info, err := packet.ParseMapChangePayload(data); err == nil {
 				s.mapMu.Lock()
@@ -526,7 +570,6 @@ func (s *Session) recvUntilConReady(ctx context.Context) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("session07: did not receive CON_READY")
 }
 
 func (s *Session) recvUntilReadyToEnter(ctx context.Context) error {
