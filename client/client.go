@@ -51,20 +51,21 @@ const inputMinInterval = 100 * time.Millisecond
 type Client struct {
 	sess Session
 
-	address         string
-	name            string
-	clan            string
-	skin            string
-	country         int
-	password        string                    // server password, sent in handshake (V42); empty = unprotected
-	timeoutCode     string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
-	rconPassword    string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
-	rconAuthed      bool                      // current rcon auth state (V44), protected by mu
-	caps            packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
-	version         packet.Version
-	mapCache        *packet.MapCache
-	snapStorageSize int // packet.SnapStorage window for the session reader; 0 = default (V53)
-	log             *slog.Logger
+	address          string
+	name             string
+	clan             string
+	skin             string
+	country          int
+	password         string                    // server password, sent in handshake (V42); empty = unprotected
+	timeoutCode      string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
+	rconPassword     string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
+	rconAuthed       bool                      // current rcon auth state (V44), protected by mu
+	caps             packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
+	version          packet.Version
+	mapCache         *packet.MapCache
+	snapStorageSize  int // packet.SnapStorage window for the session reader; 0 = default (V53)
+	predInputRingLen int // prediction input ring size; 0 = default (V54)
+	log              *slog.Logger
 
 	// snap state — protected by mu
 	mu   sync.RWMutex
@@ -195,6 +196,14 @@ func WithSnapStorageSize(n int) Option {
 	return func(c *Client) { c.snapStorageSize = n }
 }
 
+// WithPredInputRingSize sets the number of recent local inputs retained for
+// prediction re-simulation (V54). The default (256) is kept when unset or zero;
+// a too-small value is clamped up to a safe floor so the re-sim window stays
+// covered. Only relevant when prediction is enabled.
+func WithPredInputRingSize(n int) Option {
+	return func(c *Client) { c.predInputRingLen = n }
+}
+
 // WithPrediction enables DDNet-style client-side prediction of the local
 // character (V11). When disabled (the default), PredictedCharacter returns the
 // raw snapshot state.
@@ -279,6 +288,8 @@ func New(address string, opts ...Option) *Client {
 	if c.timeoutCode == "" {
 		c.timeoutCode = generateTimeoutCode()
 	}
+	// Size the prediction input ring (clamped; default when unset, V54).
+	c.predInputs.configure(c.predInputRingLen)
 	return c
 }
 

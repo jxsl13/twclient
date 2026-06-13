@@ -385,6 +385,49 @@ register: func WithSnapStorageSize(n int) Option        // Client; plumbs to ses
 plumb: `Client.WithSnapStorageSize(n)` → `net6/net7 NewSession(WithSnapStorageSize(n))` (in `Client.newSession`) → stored on Session → `StartReader` builds `packet.NewSnapStorage(SnapItemSize, WithMaxSnaps(n))` (`net6/reader.go:42`, `net7/reader.go:42`). net7 itemSizeFn stays nil. unset → 16.
 bounds: n ≤ 0 → default 16. n below the live delta-window min (server deltas against a recently-acked snap; purge at `snap.go:113-127` keys off `MaxSnaps`) → clamp UP, else the base the server deltas against gets purged → decode fails (V53).
 
+### configurable buffer sizes (T43–T45)
+generalize the WithSnapStorageSize/WithMaxSnaps pattern (V53/I.snapsize) to EVERY source-derived buffer whose capacity is a hardcoded default lifted from the original (DDNet/TW) client. each gets a variadic option; default = the CURRENT hardcoded value (opt-in, behavior + tests unchanged, V48-style); ctor-validates + clamps (V54). wire-format constants are NOT buffers and are EXCLUDED (V55) — options size LOCAL memory/queues only, never wire layout.
+```
+predInputRingSize (client/prediction.go:12, = 256, DDNet local-input history ring):
+  register: func WithPredInputRingSize(n int) Option    // Client
+  change: predInputBuffer.ring [256]predInput fixed ARRAY → []predInput slice sized at construction;
+    index stays tick % len(ring); New() seeds the buffer (nil slice → mod-by-zero panic, so MUST init).
+  clamp: n ≤ 0 → 256; 0 < n < min → min (min ≥ a few ticks of horizon so re-sim base is retained).
+reader eventCh buffer (net6/reader.go:41 + net7/reader.go:41, = 128):
+  session: func WithEventChanSize(n int) Option          // net6 & net7 (protocol-unified C2)
+  register: func WithEventChanSize(n int) Option         // Client → plumbed via newSession
+  use: StartReader make(chan packet.Event, n). clamp: n ≤ 0 → 128; 0 < n < min → min (min ≥ 1).
+UDP read buffer (network/conn.go:70 SetReadBuffer(2*1024*1024)):
+  network: func WithReadBufferSize(n int) DialOption      // same shape as WithReadTimeout/WithWriteTimeout
+  session: func WithReadBufferSize(n int) Option          // net6 & net7 → network.Dial(..., WithReadBufferSize(n))
+  register: func WithReadBufferSize(n int) Option         // Client → plumbed via newSession
+  use: udp.SetReadBuffer(n). clamp: n ≤ 0 → 2MB default (OS further clamps to rmem_max; ⊥ forced min).
+```
+plumb: same Client → Session → {reader | network.Dial} path as V53 (`Client.newSession` forwards each option to net6/net7 `NewSession`). every default UNCHANGED when the option is unset.
+NOT tunable (V55, wire-format — changing breaks the protocol): `MaxPacketSize` 1400, `MaxSequence` 1024, `HeaderSize` 7 / `HeaderSizeConnless` 9, `TokenRequestDataSize` 512, net7 `AntiReflectionSize`. keepalive (2s) / reack (500ms) intervals = timing, out of scope here (`?` — add later if wanted).
+
+### master server list + server info (T46–T47)
+fetch the DDNet master server list over HTTPS+JSON, and query a single server's info CONNLESS (no login). new top-level package `master` holds the browser types + both entry points; net6/net7 gain the connless info request/parse helpers. stdlib only — `net/http` + `encoding/json` + `crypto/tls` default (C1: ⊥ new deps).
+```
+master (new pkg; imports net6/net7 + network + packet; ⊥ imported by them — no cycle):
+  DDNet masters (HTTPS, failover): master1.ddnet.org … master4.ddnet.org, path /ddnet/15/servers.json (? "15" = master proto ver, confirm)
+  type PlayerInfo  — Name, Clan string; Country, Score int; IsPlayer bool   // a server's CURRENT client (player or spectator)
+  type ServerInfo  — Name, GameType, MapName string; Passworded bool; NumPlayers, MaxPlayers, NumClients, MaxClients int; Clients []PlayerInfo
+  type Address     — Version packet.Version (06/07); Host string; Port int   // parsed from "tw-0.6+udp://host:port" / "tw-0.7+udp://…"
+  type ServerEntry — Addresses []Address; Location string; Info ServerInfo
+  func FetchServerList(ctx) ([]ServerEntry, error)            // first reachable master, decode JSON "servers"; failover on http/decode err
+  func FetchServerListFrom(ctx, url string) ([]ServerEntry, error)
+  opts: WithHTTPClient(*http.Client), WithMasters([]string)   // override default client/timeout + master URLs
+  json: tolerant decode — unknown fields ignored (forward-compat); an address with an unknown scheme is SKIPPED, ⊥ fails the whole list (V56).
+connless server info (query ONE server directly, no session/handshake/login):
+  func QueryServerInfo(ctx, version packet.Version, addr string, opts ...) (ServerInfo, error)   // master pkg
+  flow: open UDP (network.Dial), send connless INFO request, recv connless response, parse → ServerInfo (incl. Clients player list). ctx-bounded; ⊥ Login/Handshake (V57).
+  helpers (version-aware, connless flag already in headers):
+    net6: BuildInfoRequestConnless(token) []byte ; ParseInfoResponseConnless([]byte) (ServerInfo,error)   // 0.6 "gie3"/extended info (? exact token+layout, ref §R)
+    net7: BuildInfoRequestConnless(token) []byte ; ParseInfoResponseConnless([]byte) (ServerInfo,error)   // 0.7 differs (? confirm)
+```
+the master `info.clients` array IS the current player list per server (name/clan/country/score/is_player) — surfaced as `ServerInfo.Clients`; same struct returned by `QueryServerInfo` so callers get one shape from either source.
+
 ## §V — invariants
 
 - V1: new event types ! implement `packet.Event` (`eventTag()`), emitted via `packet.SendEvent` on `EventCh()`. `packet/event.go`.
@@ -443,6 +486,11 @@ bounds: n ≤ 0 → default 16. n below the live delta-window min (server deltas
 - V51: bounded alloc on steady-state hot paths — per-tick (snap decode, prediction tick, tickstate build, event diff) and per-message (unpack) paths reuse pooled/Reset buffers + preallocate slice cap; ⊥ unbounded per-call `make`. data RETAINED past the call (snapshot `Fields`, emitted events) is still freshly allocated/copied out — measured by `allocs/op` not zeroed blindly.
 - V52: pooled scratch ⊥ alias retained state — anything stored beyond the call (in a `Snapshot`, `TickState`, event) is COPIED out of pooled/`Reset` buffers before the buffer is reused or returned to the pool. ⊥ use-after-free / cross-tick aliasing. (safety corollary of V51; `-race` + parity tests guard.)
 - V53: snap storage size configurable — `packet.SnapStorage.MaxSnaps` (delta-base ring window) settable via `WithSnapStorageSize(n)` plumbed Client→net6/net7 Session→`NewSnapStorage(WithMaxSnaps(n))` (V41 ctor-validated, ⊥ raw literal mutation of MaxSnaps in the public path). default 16 UNCHANGED when unset (opt-in only, V48-style — existing behavior + tests identical with no opt). invalid `n ≤ 0` → default; `n` below the live delta-window min → clamp UP so purge (`snap.go:113-127`, keyed off MaxSnaps) ⊥ drop the base the server deltas against (too small → "snap: apply delta" decode failure). protocol-unified (net6+net7, C2). targets `packet.SnapStorage` (delta ring) ⊥ `client.SnapStorage` (per-player state).
+- V54: source-derived buffer sizes configurable — every hardcoded buffer/queue capacity lifted from the original client (`predInputRingSize` 256, reader `eventCh` 128, UDP read buffer 2MB) is settable through a variadic option, same idiom as V53. each option is ctor-validated (V41): `n ≤ 0` → the original default (so unset == default, opt-in); `0 < n < min` → clamped UP to a safe floor. default UNCHANGED when unset → existing behavior + tests identical (V48-style). options plumb Client→Session→{reader | network.Dial} like V53. ⊥ raw-literal bypass; ⊥ a default that differs from the original value.
+- V55: wire-format constants ⊥ tunable — protocol-fixed sizes stay constant: `MaxPacketSize` 1400, `MaxSequence` 1024, net7 `HeaderSize` 7 / `HeaderSizeConnless` 9, `TokenRequestDataSize` 512, `AntiReflectionSize`. these define wire layout / sequence space; a config option changing them would break interop. V54 options resize LOCAL memory/queues only — never a value the peer parses.
+- V56: master list over HTTPS+JSON — `master.FetchServerList` GETs a DDNet master (`/ddnet/15/servers.json`), decodes `servers`, returns `[]ServerEntry`. stdlib only (`net/http`+`encoding/json`, C1). context-bounded (honors ctx cancel/deadline). failover: try masters in order, return the first success; all-fail → error. decode TOLERANT — unknown JSON fields ignored (forward-compat); an `addresses` entry with an unparseable/unknown scheme is skipped, ⊥ failing the whole list. each `Address` carries `packet.Version` so 0.6/0.7 are distinguished. `ServerInfo.Clients` = the server's current player/spectator list.
+- V57: server info WITHOUT a play session — `master.QueryServerInfo` opens only a UDP socket and exchanges CONNLESS packets (uses the existing connless header flag), sends NO Handshake/Login/Ready, and returns parsed `ServerInfo` (incl. `Clients`). ctx-bounded with timeout. version-aware (net6 vs net7 connless info build/parse differ). result struct identical to the master-list `ServerInfo` so either source yields one shape.
+- V58: browser is read-only + side-effect-free on the game client — `master` package neither creates a `client.Client`/session nor mutates connection state; it only reads (HTTP GET, connless query). callable standalone before/without ever connecting to play.
 
 ## §T — tasks
 
@@ -501,10 +549,17 @@ T39|x|client per-tick alloc cut: snap.go derive* append into one evs (cap=prev l
 T40|x|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
 T41|x|snap storage size option: packet `NewSnapStorage(fn, ...SnapStorageOption)` variadic + `WithMaxSnaps(n)` ctor-validated clamp (default 16, min=delta-window); net6/net7 Session `WithSnapStorageSize` opt → StartReader; Client `WithSnapStorageSize` Option plumb via `newSession`; ⊥ change default behavior|V53,V41,I.snapsize
 T42|x|tests: option sets MaxSnaps on both protocols; unset = 16 default; invalid (≤0)/too-small clamped; delta still decodes at configured size (parity vs default); ⊥ regress default|V53,V41,I.snapsize
+T43|x|predInputRingSize configurable: WithPredInputRingSize(n) Client option; predInputBuffer.ring [256]array → []slice sized at New() (init so nil-slice ⊥ mod-by-zero); index tick%len(ring); default 256 clamp (≤0→256, <min→min); + tests (default/set/clamp, record→get round-trip at small size)|V54,V41,I.bufsize
+T44|.|reader eventCh buffer configurable: WithEventChanSize(n) net6+net7 Session option + Client option plumbed via newSession; StartReader make(chan,n); default 128 clamp (≤0→128, <min→min); + tests both protocols (option→cap(reader.eventCh), default, clamp)|V54,V41,I.bufsize
+T45|.|UDP read buffer configurable: network.WithReadBufferSize(n) DialOption (network/conn.go, like WithReadTimeout) + net6/net7 Session option + Client option plumbed via newSession → network.Dial; udp.SetReadBuffer(n); default 2MB clamp (≤0→2MB); + tests (DialOption sets field, default, plumb)|V54,V55,V41,I.bufsize
+T46|.|master pkg: types (PlayerInfo/ServerInfo/Address/ServerEntry); FetchServerList(ctx)/FetchServerListFrom over DDNet masters /ddnet/15/servers.json; tolerant JSON decode; address "tw-0.6+udp://host:port" parse → {Version,Host,Port} (unknown scheme skipped); failover; WithHTTPClient/WithMasters opts; + tests (decode fixture incl clients player list, address parse, unknown-scheme skip, failover, ctx cancel)|V56,V58,I.master,C1
+T47|.|connless server info (no session): net6/net7 BuildInfoRequestConnless + ParseInfoResponseConnless (version-aware, §R refs); master.QueryServerInfo(ctx,version,addr,opts) opens UDP only, connless request→response→ServerInfo incl Clients, ctx timeout, ⊥ Handshake/Login; + tests (build/parse round-trip from captured response bytes, no-session assertion)|V57,V58,I.master,C2
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
 perf effort (library client, ⊥ racebot): T34–T40 = `.` (pending). build order: T34 (bench baseline) → T35 (profile/rank) → T36 (snap O(1)) → T37 (unpacker reuse) → T38 (packer pack) → T39 (client per-tick) → T40 (re-bench/verify). T34+T35 are measure-FIRST gates — ⊥ optimize (T36–T39) before profile confirms targets (V49).
-snap storage size config: T41–T42 = `.` (pending). build order: T41 (plumb option packet→session→client + clamp) → T42 (tests). additive opt-in, default unchanged (V53).
+snap storage size config: T41–T42 = `x` (done). build order: T41 (plumb option packet→session→client + clamp) → T42 (tests). additive opt-in, default unchanged (V53).
+configurable buffer sizes: T43–T45 = `.` (pending). build order: T43 (predInputRingSize) → T44 (eventCh buffer) → T45 (UDP read buffer). each = option + clamp + tests; additive opt-in, defaults unchanged (V54); wire-format constants excluded (V55).
+master server list + server info: T46–T47 = `.` (pending). build order: T46 (HTTP/JSON master list) → T47 (connless server-info query). new `master` pkg, stdlib only (V56), read-only/no-session (V58); connless info reuses header connless flag (V57).
 build order: T29 (password) → T30 (rcon API) → T31 (rcon state+reactions) → T32 (rcon tests) → T22 (research wire) → T23 (disconnect classify) → T24 (timeout code send) → T25 (reconnect-with-timeout) → T26 (auto-reconnect loop) → T27 (OnDisconnect callback) → T28 (reconnect tests).
 prior build order (completed): T19 → T14 → T21 → T13 → T12 → T10a → T15 → T16 → T20 → T17.
 
@@ -517,6 +572,7 @@ catalog + prediction verified against pulled sources:
 - DDNet timeout-code (T22, VERIFIED `~/Desktop/Development/ddnet`): NOT a dedicated netmsg — code is sent as a CHAT COMMAND `/timeout <code>` from `CClient::OnPostConnect` (`src/engine/client/client.cpp:527-536`) AFTER entergame, only when the server advertises `SERVERCAPFLAG_CHATTIMEOUTCODE` (`src/engine/shared/protocol_ex.h:34`). server handler `ConTimeout` (`src/game/server/ddracechat.cpp:565-600`): matches `/timeout` arg against every player's stored `m_aTimeoutCode`; on match `Server()->SetTimedOut(i, newClientId)` REClaims the timed-out tee + re-sends tuning. drop side: `SetTimeoutProtected` keeps the tee. SIXUP/0.7 CANNOT reclaim (server logs "0.7 clients can not reclaim … 0.6 client can") → resume = DDNet 0.6 ONLY (V37). code: DDNet derives MD5(seed+"normal"/"dummy"+server-addrs) via `generate_password` (`client.cpp:583`), or fixed `cl_timeout_code`; ANY stable string works — server only compares equality, so a per-client stable random satisfies V32. NOTE: our client does not yet parse server caps (NETMSG_EX) → cap-gating unavailable; T24 sends `/timeout` best-effort on 0.6 when resume enabled, cap-parse = `?` future refinement.
 - ban/kick CTRL_CLOSE reason strings (T23, ← `~/Desktop/Development/ddnet` + teeworlds): verify exact text in `src/engine/server/server.cpp` (`Kick`/ban) + `src/engine/shared/network*.cpp` — "Kicked (...)", ban "Banned (...)"/"You have been banned" (+duration text), "Server shutdown". confirm on T23.
 - perf (T34–T40, ← DDNet `src/engine/shared/snapshot.cpp` + Go runtime/profiling): DDNet `CSnapshot::GetItemIndex` uses an item index/hashtable for O(1) lookup (⊥ linear) → V50; `CSnapshotDelta::UnpackDelta` works over fixed preallocated `MAX_SNAPSHOT_SIZE` buffers, item field counts from `CSnapshotItem` type tables (no per-item size read) → V51. teeworlds `datasrc/network.py` item field counts ≅ our `ItemSizeFn`. Go: profile via `go test -bench . -benchmem -cpuprofile cpu.out -memprofile mem.out` + `go tool pprof`; escape analysis `go build -gcflags=-m`; `sync.Pool` for per-call scratch (already `deltaScratch`); prealloc slice cap; avoid `[]byte`↔`string` copies (`unsafe`-free). VERIFY actual hot paths on real snap traffic in T35 before optimizing (V49).
+- master list + connless info (T46–T47, ← DDNet mastersrv + teeworlds/DDNet `serverbrowser`): DDNet mastersrv serves `servers.json` at `/ddnet/15/servers.json` (path + `/ddnet/15/register` confirmed via mastersrv README; `addresses` = `["tw-0.6+udp://host:port", …]`, `location`, `info{name,map,game_type,passworded,max_clients,max_players,clients[{name,clan,country,score,is_player}]}`). masters master1…master4.ddnet.org over HTTPS (served by reverse proxy). VERIFY exact `info` field names + the "15" version segment on T46 against a live fetch / mastersrv source. connless server info (T47): DDNet/TW connless `getinfo`/`info` exchange — 0.6 EXTENDED info (`src/engine/server/server.cpp` `SendServerInfo`, request token in `CServer::ProcessConnlessPacket`), 0.7 token-gated connless; exact request magic + response layout = `?`, pin from `~/Desktop/Development/ddnet`/teeworlds `serverbrowser`/`server.cpp` before T47. uses the connless header flag already in `net6/header.go`/`net7/header.go`.
 
 ## §A — architecture (ref, ex-docs/ARCHITECTURE.md)
 
