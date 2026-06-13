@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jxsl13/twclient/packet"
-	"github.com/jxsl13/twclient/teehistorian"
+	"github.com/jxsl13/twclient/record/teehistorian"
 )
 
 // Build a minimal file, write it, and parse it back — the records round-trip.

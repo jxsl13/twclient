@@ -14,7 +14,7 @@ import (
 // testdata/teehistorian-large/ folder. These are NOT committed (150MB+); the
 // test skips cleanly when the folder is absent so CI and fresh clones pass.
 func largeFixtures(t testing.TB) []string {
-	m, _ := filepath.Glob("../testdata/teehistorian-large/*.teehistorian")
+	m, _ := filepath.Glob("../../testdata/teehistorian-large/*.teehistorian")
 	if len(m) == 0 {
 		t.Skip("no large teehistorian fixtures (testdata/teehistorian-large absent) — skipping")
 	}

@@ -11,7 +11,7 @@ import (
 
 func fixtures(t *testing.T) []string {
 	t.Helper()
-	m, err := filepath.Glob("../testdata/teehistorian/*.teehistorian")
+	m, err := filepath.Glob("../../testdata/teehistorian/*.teehistorian")
 	if err != nil || len(m) == 0 {
 		t.Skipf("no teehistorian fixtures: %v", err)
 	}

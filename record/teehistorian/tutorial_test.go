@@ -11,7 +11,7 @@ import (
 // tutorialPath is a committed real human recording on the Tutorial map — small
 // enough to track in git, exercised explicitly (it lives beside the other
 // Tutorial assets in testdata/, NOT in the testdata/teehistorian/ glob dir).
-const tutorialPath = "../testdata/Tutorial.teehistorian"
+const tutorialPath = "../../testdata/Tutorial.teehistorian"
 
 func readTutorial(t *testing.T) []byte {
 	t.Helper()
