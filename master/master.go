@@ -147,7 +147,7 @@ func New(opts ...Option) *Client {
 	c := &Client{
 		masters:      DefaultMasters,
 		http:         &http.Client{Timeout: DefaultHTTPTimeout},
-		policy:       Failover(),
+		policy:       ChooseFastest(),
 		queryTimeout: DefaultQueryTimeout,
 	}
 	for _, opt := range opts {
