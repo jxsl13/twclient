@@ -164,14 +164,16 @@ func (s *Session) Handshake(ctx context.Context) error {
 
 // Login performs the full connection sequence:
 // handshake → info → (recv map_change) → ready → (recv con_ready) → startinfo + entergame
-func (s *Session) Login(ctx context.Context, name, clan, skin string, country int) error {
+func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.LoginOption) error {
+	cfg := packet.ApplyLoginOptions(opts...)
+	country := cfg.Country
 	if err := s.Handshake(ctx); err != nil {
 		return err
 	}
 
 	// Send info
 	s.log.Debug("sending INFO", "version", NetVersion)
-	infoMsg := SysInfo(NetVersion, "")
+	infoMsg := SysInfo(NetVersion, cfg.Password)
 	infoChunk := WrapVitalChunk(infoMsg, s.NextSeq())
 	if err := s.SendChunks(1, infoChunk); err != nil {
 		return fmt.Errorf("session07: send info: %w", err)

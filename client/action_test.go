@@ -20,18 +20,20 @@ type stubSession struct {
 	callVote [3]string
 }
 
-func (s *stubSession) Login(context.Context, string, string, string, int) error { return nil }
-func (s *stubSession) Close() error                                             { return nil }
-func (s *stubSession) StartReader(context.Context)                              {}
-func (s *stubSession) EventCh() <-chan packet.Event                             { return nil }
-func (s *stubSession) DownloadMap(context.Context) (*twmap.Map, error)          { return nil, nil }
-func (s *stubSession) Map() *twmap.Map                                          { return nil }
-func (s *stubSession) MapName() string                                          { return "" }
-func (s *stubSession) GetMapInfo() packet.MapInfo                               { return packet.MapInfo{} }
-func (s *stubSession) SetMap(*twmap.Map, packet.MapInfo)                        {}
-func (s *stubSession) Poll() (packet.Event, error)                              { return nil, nil }
-func (s *stubSession) SendInput(int, int, int, []byte) error                    { s.lastCall = "input"; return nil }
-func (s *stubSession) SendChat(string) error                                    { s.lastCall = "chat"; return nil }
+func (s *stubSession) Login(context.Context, string, string, ...packet.LoginOption) error {
+	return nil
+}
+func (s *stubSession) Close() error                                    { return nil }
+func (s *stubSession) StartReader(context.Context)                     {}
+func (s *stubSession) EventCh() <-chan packet.Event                    { return nil }
+func (s *stubSession) DownloadMap(context.Context) (*twmap.Map, error) { return nil, nil }
+func (s *stubSession) Map() *twmap.Map                                 { return nil }
+func (s *stubSession) MapName() string                                 { return "" }
+func (s *stubSession) GetMapInfo() packet.MapInfo                      { return packet.MapInfo{} }
+func (s *stubSession) SetMap(*twmap.Map, packet.MapInfo)               {}
+func (s *stubSession) Poll() (packet.Event, error)                     { return nil, nil }
+func (s *stubSession) SendInput(int, int, int, []byte) error           { s.lastCall = "input"; return nil }
+func (s *stubSession) SendChat(string) error                           { s.lastCall = "chat"; return nil }
 func (s *stubSession) SendChatTeam(team bool, _ string) error {
 	s.lastCall, s.chatTeam = "chatTeam", team
 	return nil

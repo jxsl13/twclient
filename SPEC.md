@@ -2,7 +2,7 @@
 
 ## §G — goal
 
-Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven consumer path (`Observer` view-only + single `Controller` view+action) serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept).
+Client exposes callback registration for server events (chat, whisper, server msg, vote, hook-by, weapon-change, …) + full DDNet antiping prediction (predict whole world — all chars + projectiles/lasers — ahead of snaps via `physics.Core`, smoothed reconcile) + ONE pluggable tick-driven consumer path (`Observer` view-only + single `Controller` view+action) serving UI render+input, ML training, and ML execution identically (protocol-unified) — incl. ego-centric fixed-window map observation over the complete local map. consolidate redundant types (one canonical per concept). + resilient connection: auto-reconnect that resumes the SAME tee via DDNet timeout-code after a drop, and reconnect after kick/ban by waiting out the ban while periodically polling for early unban. + connect to password-protected servers. + remote console (rcon): log in, send commands, and react to rcon log lines.
 
 ## §C — constraints
 
@@ -11,6 +11,7 @@ Client exposes callback registration for server events (chat, whisper, server ms
 - C3: callbacks fire from `eventLoop` goroutine (`client/client.go:363`). 1 goroutine → callbacks serialized.
 - C4: existing event flow unchanged: session reader → `packet.Event` on `EventCh()` → `Client.handleEvent`. New events extend `packet.Event` interface (`eventTag()`).
 - C5: 2 event classes. msg-derived = parse game msg in `net6/reader.go` `processPayload` switch (`:180`) & net7 equiv. snap-derived (hook-by, weapon-change) = diff consecutive `CharacterState` in `client/snap.go`.
+- C6: timeout-code RESUME = DDNet ext (DDNet sys msg sent after join). vanilla teeworlds 0.6/0.7 ⊥ resume → feature DDNet-only, documented version-only (V37). kick/ban DETECT (CTRL_CLOSE reason) works on ALL servers — reason already surfaced as `packet.EventClose{Reason}` (`net6/reader.go:128`), today dropped at `client/client.go:499` (T23 fixes). reconnect reuses existing `Client.Connect`/`Reconnect` (`client/client.go:218,288`) — ⊥ new session path.
 
 ## §I — interfaces
 
@@ -249,6 +250,64 @@ scalars (per-tick, appended to obs):
   ACTIVE tuning vector at self tile (V29), self tune-zone index, race time, game state flags
 ```
 
+### server password (T29)
+connect to password-protected servers. wire already supports it — `SysInfo(version, password)` exists in both readers (`net6/messages.go:48`, `net7/messages.go:53`); `Login` currently hardcodes `""` (`net6/session.go:223`). plumb a password through.
+```
+register: func WithPassword(pw string) Option   // sent in NETMSG_INFO handshake; empty = unprotected
+flow: Connect→Login sends SysInfo(version, pw) (net6 & net7, protocol-unified C2). wrong/missing pw on a
+  protected server → server CTRL_CLOSE "Wrong password" → DisconnectReason{Kind:WrongPassword} (V34).
+  password held on Client, reused across every reconnect (V33). ⊥ logged in cleartext.
+```
+
+### remote console — rcon (T30–T32)
+log into rcon, send commands, react to log lines. wire + inbound parsing ALREADY present — `SysRconAuth(pw)`/`SysRconCmd(cmd)` (`net6/messages.go:121,129`, net7 equiv) + events `EventRconLine`/`EventRconAuth`/`EventRconCmd` (T4c, x). MISSING = the client-facing API + auth-state + re-auth on reconnect.
+```
+register: func WithRconPassword(pw string) Option   // auto rcon-login after each (re)connect
+api: func (c *Client) RconLogin(ctx, pw string) error   // SysRconAuth → await EventRconAuth(on)/level; err on reject/timeout/ctx
+api: func (c *Client) Rcon(cmd string) error            // SysRconCmd; err ErrNotAuthed if !RconAuthed()
+api: func (c *Client) RconAuthed() bool                 // current auth state (from EventRconAuth, cleared on disconnect)
+api: func (c *Client) OnRconLine(fn func(*Client, packet.EventRconLine)) func()   // react to console output
+api: func (c *Client) OnRconAuth(fn func(*Client, packet.EventRconAuth)) func()   // auth on/off + level
+api: func (c *Client) OnRconCmd(fn func(*Client, packet.EventRconCmd)) func()     // cmd-list add/rem (completion)
+flow: SysRconAuth(pw) → server replies RCON_AUTH_ON+level (EventRconAuth) on success, else an EventRconLine error.
+  authed → Rcon(cmd)=SysRconCmd. server output streams as EventRconLine → OnRconLine handler reacts (may issue more Rcon).
+  session-level send wrappers: SendRconAuth/SendRconCmd on net6 & net7 Session (protocol-unified, V43).
+```
+
+### reconnect / timeout-code / ban (T22–T28)
+resilient connection on top of existing `Connect`/`Reconnect`/`Close` + `packet.EventClose` (C6). identity (name/clan/skin/country) + timeout code held on `Client`, reused across every reconnect.
+```
+type: DisconnectReason — classified CTRL_CLOSE (T23)
+  Kind  DisconnectKind   // Closed|Kicked|Banned|TimedOut|ShuttingDown|Full|WrongPassword|Unknown
+  Text  string           // raw server reason (verbatim)
+  BanDuration time.Duration // parsed when Kind=Banned & finite; 0 = unknown/permanent
+type: Backoff — PLUGGABLE wait schedule (interface); user may supply own impl
+  Next() time.Duration   // wait before next attempt; advances internal state
+  Reset()                // return to initial delay; called after a successful connect
+type: ExponentialBackoff — DEFAULT impl (unexported fields; build via ctor, V41)
+  Next() doubles each consecutive retry: 1s,2s,4s,…,capped at Max=1h, then stays 1h.
+  the 1h cap IS the steady-state poll interval between reconnect/unban tries.
+type: ReconnectPolicy — drives AutoReconnect (T26); built via ctor/options (V41), not raw literal
+  fields: MaxAttempts (0=∞), Backoff, ResumeWithTimeout — set through options, sane zero-value default.
+ctors (V41 — no raw-struct init in the public contract):
+  func NewExponentialBackoff(base time.Duration, factor float64, max time.Duration) *ExponentialBackoff
+  func DefaultBackoff() Backoff                       // = NewExponentialBackoff(1s, 2, 1h)
+  func NewReconnectPolicy(opts ...ReconnectOption) ReconnectPolicy   // functional options, matches Client Option idiom
+  func DefaultReconnectPolicy() ReconnectPolicy       // ∞ attempts, DefaultBackoff(), ResumeWithTimeout=true
+  opts: WithMaxAttempts(int), WithBackoff(Backoff), WithResumeTimeout(bool)
+  func NewDisconnectReason(raw string) DisconnectReason   // classifier ctor (reader-side, T23); ⊥ user-built
+register: func WithTimeoutCode(code string) Option   // DDNet resume token; empty → auto-gen random stable code
+register: func WithAutoReconnect(p ReconnectPolicy) Option
+api: func (c *Client) TimeoutCode() string                       // current code (stable, V32)
+api: func (c *Client) ReconnectWithTimeout(ctx) error            // reconnect reusing identity+code → resume tee (DDNet; vanilla = fresh, V37)
+api: func (c *Client) AutoReconnect(ctx) error                   // loop: reconnect on Backoff schedule (default 1s→×2→cap 1h); Banned retries = unban polls; ctx-abortable; until connected or MaxAttempts (V35,V36,V39); graceful cancel → clean CTRL_CLOSE (V40)
+api: func (c *Client) OnDisconnect(fn func(*Client, DisconnectReason)) func()   // callback on CTRL_CLOSE (V38)
+api: func (c *Client) LastDisconnect() DisconnectReason          // last classified disconnect
+```
+timeout-resume flow (DDNet): after Login + entering game, send DDNet timeout-code msg (id/timing ← research T22/§R). server keeps the tee in timed-out state on drop; reconnect with SAME code → server re-attaches → position/hook/race-time resume server-side. local snap+prediction reset (`Connect`, V9), race time re-syncs from first snap.
+ban flow: CTRL_CLOSE reason → `DisconnectReason`. Banned → `AutoReconnect` keeps retrying on the `Backoff` schedule (default 1s,2s,…,cap 1h); each retry doubles as an unban poll (server may lift ban early) — first attempt with no CLOSE ends the wait + `Backoff.Reset()`. Banned+finite duration MAY seed the first wait at ≥ duration. unknown/permanent ban → retry until `MaxAttempts` (0=∞) then give up.
+shutdown: every wait + the connect attempt itself `select` on `ctx.Done()`; ctx cancel returns promptly (V39). graceful stop sends a clean CTRL_CLOSE disconnect to the server (V40), so the tee is NOT left for the timeout path (timeout-resume is for UNEXPECTED drops, not deliberate quit).
+
 ## §V — invariants
 
 - V1: new event types ! implement `packet.Event` (`eventTag()`), emitted via `packet.SendEvent` on `EventCh()`. `packet/event.go`.
@@ -284,6 +343,22 @@ scalars (per-tick, appended to obs):
 - V28: observation completeness — obs exposes EVERYTHING available for the tick: ALL static map layers (collision, freeze, death, tele, speedup, switch, tune-zone), ALL dynamic entities (self, players, projectiles, lasers, pickups, flags, doors/ext), AND agent scalars (current weapon, health/armor/ammo, velocity, hook, active tuning vector, tune-zone, race/game state). ⊥ silently omit an available entity/layer. unavailable item → documented `?`, not dropped.
 - V29: position-dependent tuning — tuning may differ per DDNet tune-zone. `MapView.TuneZone(tx,ty)` from map Tune layer; `Client.TuningAt(tx,ty)`/`ActiveTuning` resolve it. default tuning ← `Sv_TuneParams` (zone 0). per-zone tuning VALUES ⊥ reliably on wire (server-side `tune_zone` config) — `?`; model still observes the zone INDEX + resulting trajectory, so it can learn zone behavior. prediction uses zone tuning when known, else default; ⊥ assume single global tuning on DDRace maps with tune zones.
 - V30: per-tile tuning in observation — obs window includes ONE plane per tuning param, each cell = `TuningAt(tile)` (the tile's zone tuning), so the model sees the physics every tile imposes and can predict movement on tiles it will consume. piecewise-constant per zone. unknown per-zone values → default(zone-0) fallback; the tune-zone-index plane (V28) still separates zones. ⊥ expose only self-tile tuning when full-window per-tile tuning is the observation goal.
+
+- V32: timeout code STABLE per `Client` — generated once (`WithTimeoutCode` or auto-gen) and reused on EVERY (re)connect. ⊥ regenerate per session (new code orphans the timed-out tee → no resume). DDNet-only; vanilla sends no timeout msg (V37).
+- V33: reconnect preserves identity — name/clan/skin/country + timeout code carried across `Reconnect`/`ReconnectWithTimeout`/`AutoReconnect`. resumed tee continues server-side position + race time; local snap/prediction reset on `Connect` (V9) and race time re-syncs from the first post-reconnect snap. ⊥ lose identity on reconnect.
+- V34: disconnect classified — CTRL_CLOSE reason (`packet.EventClose{Reason}`) → `DisconnectReason{Kind,Text,BanDuration}`. ban detected by reason-text match; duration parsed when present else 0 (unknown/permanent). raw text preserved verbatim. ⊥ silently drop reason (current `client/client.go:499` drops it — T23 fixes).
+- V35: ban-aware reconnect — `AutoReconnect` on `Kind=Banned` keeps retrying on the `Backoff` schedule; each retry IS the unban poll (no separate poll knob — the backoff cap = poll interval). a reconnect that completes without CLOSE ends the wait and calls `Backoff.Reset()`. ⊥ retry faster than the backoff delay. honors ctx cancel (V39).
+- V36: pluggable bounded backoff — `ReconnectPolicy.Backoff` is an interface (`Next()/Reset()`); user may supply any impl. default = `ExponentialBackoff{Base 1s, Factor 2, Max 1h}`: delays 1s,2s,4s,…,capped at 1h. `AutoReconnect` honors `MaxAttempts` (0=∞). ⊥ infinite tight loop; ⊥ hardcode the schedule (must go through `Backoff`). each attempt = one `Connect`; success → `Reset()`.
+- V37: timeout RESUME = DDNet-only, documented version-only. on a vanilla server the feature degrades to plain reconnect (fresh tee, no resume) — ⊥ assume resume on non-DDNet. detection/wait/poll (V34,V35) still apply on all servers.
+- V38: `OnDisconnect` fires from the event path (serial, V2) on CTRL_CLOSE, before any reconnect attempt; handler ⊥ block the reconnect loop (return fast / spawn own goroutine). registry concurrency-safe like other callbacks (V3,V7).
+- V39: fully ctx-aware + abortable — EVERY blocking point in `AutoReconnect`/`ReconnectWithTimeout` (each `Backoff` wait, ban wait, and the `Connect` attempt itself) `select`s on `ctx.Done()`. cancel returns promptly with `ctx.Err()` (⊥ `time.Sleep` that ignores ctx, ⊥ unkillable wait). a sleeping/waiting reconnect must abort within ~one scheduler tick of cancel.
+- V40: graceful shutdown = clean disconnect — on ctx cancel (or explicit `Close`), the client sends a CTRL_CLOSE disconnect to the server (`net6/session.go:96`, `net7/session.go:85`) before teardown, so a deliberate quit ⊥ rely on the timeout path and ⊥ leave a dangling server-side tee. timeout-resume (V32,V33) covers UNEXPECTED drops only. Close idempotent + safe under concurrent shutdown.
+- V41: construct config types via CONSTRUCTORS, ⊥ raw struct literals. `Backoff`/`ReconnectPolicy`/`DisconnectReason` built through `New…`/`Default…` (+ functional `ReconnectOption`s) — same idiom as existing `Client` `Option`s. concrete impls keep fields unexported so a zero/partial literal can't bypass invariants (e.g. `ExponentialBackoff` with base 0 → busy-loop). ctor validates + applies defaults. applies to NEW reconnect types; ⊥ regress existing types.
+- V42: server password — `WithPassword(pw)` plumbs through `Connect`→`Login`→`SysInfo(version, pw)` (net6 `:223` & net7 equiv; both already param'd). protocol-unified (C2); empty = unprotected. wrong/missing pw on a protected server → CTRL_CLOSE classified `WrongPassword` (V34). password carried across reconnect like other identity (V33). ⊥ emit password in logs/errors (cleartext leak).
+- V43: rcon protocol-unified — `SysRconAuth`/`SysRconCmd` sent on BOTH net6 & net7; inbound `EventRconLine`/`EventRconAuth`/`EventRconCmd` are shared event structs (V17, parsed T4c). consumer/callback ⊥ branch on version, ⊥ see net6/net7 rcon types.
+- V44: rcon cmd requires auth — `Rcon(cmd)` errors (`ErrNotAuthed`) when `!RconAuthed()`. auth state derived from `EventRconAuth` (on/off+level), cleared on disconnect (CTRL_CLOSE / reader EOF). ⊥ send `SysRconCmd` before auth confirmed.
+- V45: rcon re-auth on reconnect — `WithRconPassword` held on `Client`, re-sent after EACH (re)connect like identity (V33); ⊥ silently stay unauthed post-reconnect. rcon password ⊥ cleartext-logged (as V42).
+- V46: rcon reactions serial — `OnRconLine`/`OnRconAuth`/`OnRconCmd` fire from the event path (serial, V2); handler ⊥ block; MAY call `c.Rcon(...)` (dispatch after mu release, V2). registry concurrency-safe (V3,V7).
 
 ## §T — tasks
 
@@ -321,9 +396,21 @@ T17|x|tests: Action↔send both protocols; TickState complete; both cadences sha
 T19|x|consolidate redundant types: canonical CharacterState/Vec2/PlayerInput/Weapon/Tuning + single conversion sites; audit & remove dup impls; ⊥ phantom PredictedCharacter|V25
 T20|x|ML observation: ego-centric FIXED multi-channel window — ALL static planes (collision+freeze+death+tele+speedup+switch+tune-zone) + per-tile tuning planes (TuningAt per cell) + ALL dynamic entity planes + agent scalars (weapon/hp/vel/hook/active-tuning/tune-zone); config size, square default, OOB=Solid|V26,V27,V28,V30,I.mapview,I.consumer
 T21|x|position-dependent tuning: per-tune-zone tuning store; Client.TuningAt(tx,ty) over any tile/window; ActiveTuning; default←Sv_TuneParams; feed predicted world per char's zone; expose in TickState|V29,V30,V9b,I.consumer
+T22|.|research DDNet timeout-code wire protocol: msg id, send timing (after join), server resume semantics (tee kept on drop, re-attach on matching code) → §R. confirm vanilla has none|V32,V37,I.reconnect
+T23|.|DisconnectReason via NewDisconnectReason(raw) ctor: classify CTRL_CLOSE reason (Closed/Kicked/Banned/TimedOut/ShuttingDown/Full/WrongPassword); parse ban duration from text; surface via handleEvent (fix EventClose drop at client/client.go:499)|V34,V41,I.reconnect
+T24|.|timeout code: WithTimeoutCode option + auto-gen stable code + TimeoutCode(); send DDNet timeout msg after Login/join; reuse SAME code across reconnect|V32,V33,V37,I.reconnect
+T25|.|ReconnectWithTimeout(ctx): reconnect reusing identity+code → resume tee; vanilla degrades to fresh|V32,V33,V37,I.reconnect
+T26|.|AutoReconnect(ctx) loop: pluggable Backoff interface (Next/Reset) + ctors NewExponentialBackoff/DefaultBackoff; NewReconnectPolicy(opts…)/DefaultReconnectPolicy (no raw literal); MaxAttempts; Banned retries on backoff schedule (cap=poll); EVERY wait+Connect selects on ctx.Done (abortable); graceful cancel/Close sends clean CTRL_CLOSE disconnect|V35,V36,V39,V40,V41,I.reconnect
+T27|.|OnDisconnect callback + LastDisconnect(); fire serial in event path before reconnect|V38,V2,V3,V7,I.reconnect
+T28|.|tests: code stable across reconnect; reason classification + ban-duration parse; default backoff sequence (1s,2s,…,cap 1h) + custom Backoff injected + Reset on success; MaxAttempts bound; ctx-cancel aborts mid-backoff/mid-wait promptly; graceful shutdown sends clean CTRL_CLOSE; resume identity; vanilla degrade; ctors validate (base 0 rejected, defaults applied)|V32,V33,V34,V35,V36,V37,V38,V39,V40,V41
+T29|x|server password: WithPassword option + plumb Connect→Login→SysInfo(version,pw) (net6 session.go:223 + net7 equiv); carry across reconnect; wrong-pw → WrongPassword reason; ⊥ log cleartext; test connect to pw server + wrong-pw classify|V42,V33,V34,I.password
+T30|.|rcon client API: session SendRconAuth/SendRconCmd (net6+net7); RconLogin(ctx,pw) (await EventRconAuth on); Rcon(cmd) require authed (ErrNotAuthed); RconAuthed(); WithRconPassword auto-login|V43,V44,I.rcon
+T31|.|rcon state + reactions: OnRconLine/OnRconAuth/OnRconCmd callbacks; track auth from EventRconAuth, clear on disconnect; re-auth after reconnect; ⊥ log pw cleartext|V44,V45,V46,V33,I.rcon
+T32|.|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRconLine fires, re-auth after reconnect, both protocols|V43,V44,V45,V46
 ```
-order: ALL DONE — T2–T21 = x. no active rows. spec fully built.
-build order (completed): T19 (consolidate first) → T14 (mapview+layers+window) → T21 (position tuning) → T13 (tickstate) → T12 (actions) → T10a (smoothing) → T15 (frontend) → T16 (driver) → T20 (ML obs) → T17 (tests).
+order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
+build order: T29 (password) → T30 (rcon API) → T31 (rcon state+reactions) → T32 (rcon tests) → T22 (research wire) → T23 (disconnect classify) → T24 (timeout code send) → T25 (reconnect-with-timeout) → T26 (auto-reconnect loop) → T27 (OnDisconnect callback) → T28 (reconnect tests).
+prior build order (completed): T19 → T14 → T21 → T13 → T12 → T10a → T15 → T16 → T20 → T17.
 
 ## §R — research refs (verified sources)
 
@@ -331,6 +418,7 @@ catalog + prediction verified against pulled sources:
 - DDNet `github.com/ddnet/ddnet@b10c6e4ea` (master, pulled 2026-06-12). msg/obj truth `datasrc/network.py`; 0.7↔0.6 map `src/game/client/sixup_translate_game.cpp`; whisper `src/game/client/components/chat.cpp:731`; prediction `src/game/client/prediction/{gameworld,entities/character,entities/projectile}.cpp` + `src/game/client/gameclient.cpp` (`OnNewSnapshot`, two-world `:2161/2219`, smooth `:2271/2285`, WorldConfig `:2828`).
 - Teeworlds 0.7 `github.com/teeworlds/teeworlds@5d68273` (master=0.7, cloned 2026-06-12). 0.7 msg truth `datasrc/network.py`: `Sv_Chat{m_Mode,m_ClientID,m_TargetID,m_pMessage}`, `Sv_Team`, `Sv_ClientInfo/ClientDrop/SkinChange/GameInfo/GameMsg/ServerSettings/RaceFinish/Checkpoint`.
 - local: `net6/constants.go`, `net6/reader.go`, `client/snap.go`, `packet/event.go`.
+- ? PENDING (T22): DDNet timeout-code protocol — verify `NETMSG_TIMEOUT` / timeout-code msg id + send timing in `src/engine/shared/protocol.h` + `src/game/client/gameclient.cpp` (look for `m_aTimeoutCodeSent`/`SendInfo`/`OnEnterGame`); server resume in `src/game/server/gamecontext.cpp` (`OnClientConnected` timeout re-attach). ban/kick reason strings in `src/engine/server/server.cpp` (CTRL_CLOSE text: "Kicked"/"banned for N minutes"/"Server shutdown"). fill on T22.
 
 ## §A — architecture (ref, ex-docs/ARCHITECTURE.md)
 

@@ -211,7 +211,9 @@ func (s *Session) Handshake(ctx context.Context) error {
 
 // Login performs the full connection sequence:
 // handshake → info → (recv map_change) → ready → (recv con_ready) → startinfo + entergame
-func (s *Session) Login(ctx context.Context, name, clan, skin string, country int) error {
+func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.LoginOption) error {
+	cfg := packet.ApplyLoginOptions(opts...)
+	skin, country := cfg.Skin, cfg.Country
 	if err := s.Handshake(ctx); err != nil {
 		return err
 	}
@@ -220,7 +222,7 @@ func (s *Session) Login(ctx context.Context, name, clan, skin string, country in
 	// Send CLIENTVER (DDNet extension) + INFO together
 	clientVerMsg := SysClientVer()
 	clientVerChunk := WrapVitalChunk(clientVerMsg, s.NextSeq())
-	infoMsg := SysInfo(NetVersion, "")
+	infoMsg := SysInfo(NetVersion, cfg.Password)
 	infoChunk := WrapVitalChunk(infoMsg, s.NextSeq())
 	combined := append(clientVerChunk, infoChunk...)
 	if err := s.SendChunks(2, combined); err != nil {

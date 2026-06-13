@@ -14,9 +14,12 @@ import (
 // Callers interact with the session through typed events (snapshots, map
 // changes, disconnects) rather than raw packet bytes.
 type Session interface {
-	// Login connects, performs the handshake, and logs in.
+	// Login connects, performs the handshake, and logs in. Only name and clan
+	// are required; skin, country, and password are optional variadic options
+	// (packet.WithLoginSkin/WithLoginCountry/WithLoginPassword) that fall back
+	// to the DDNet/Teeworlds defaults when omitted.
 	// The context controls the handshake and login timeout.
-	Login(ctx context.Context, name, clan, skin string, country int) error
+	Login(ctx context.Context, name, clan string, opts ...packet.LoginOption) error
 
 	// Close disconnects from the server.
 	Close() error

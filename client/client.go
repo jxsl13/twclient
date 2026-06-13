@@ -55,6 +55,7 @@ type Client struct {
 	clan     string
 	skin     string
 	country  int
+	password string // server password, sent in handshake (V42); empty = unprotected
 	version  packet.Version
 	mapCache *packet.MapCache
 	log      *slog.Logger
@@ -189,15 +190,24 @@ func WithPlayerInfo(name, clan, skin string, country int) Option {
 	}
 }
 
+// WithPassword sets the server password, sent in the NETMSG_INFO handshake
+// (V42). Empty means an unprotected server. A wrong or missing password on a
+// protected server surfaces as a CTRL_CLOSE with DisconnectKindWrongPassword.
+// The password is held on the client and re-sent on every reconnect.
+func WithPassword(password string) Option {
+	return func(c *Client) { c.password = password }
+}
+
 // New creates a new headless client for the given server address.
 // By default it uses protocol version 0.6, discards logs, and creates
 // its own map cache. Use options to customize.
 func New(address string, opts ...Option) *Client {
 	c := &Client{
 		address:  address,
-		name:     "teeworlds",
+		name:     packet.DefaultName,
 		clan:     "",
-		skin:     "default",
+		skin:     packet.DefaultSkin,
+		country:  packet.DefaultCountry,
 		version:  packet.Version06,
 		mapCache: packet.NewMapCache(),
 		log:      slog.New(slog.DiscardHandler),
@@ -226,7 +236,14 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		}
 	}()
 
-	if err := sess.Login(ctx, c.name, c.clan, c.skin, c.country); err != nil {
+	loginOpts := []packet.LoginOption{
+		packet.WithLoginSkin(c.skin),
+		packet.WithLoginCountry(c.country),
+	}
+	if c.password != "" {
+		loginOpts = append(loginOpts, packet.WithLoginPassword(c.password))
+	}
+	if err := sess.Login(ctx, c.name, c.clan, loginOpts...); err != nil {
 		return fmt.Errorf("client: login: %w", err)
 	}
 
