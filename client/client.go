@@ -98,6 +98,13 @@ type Client struct {
 	// event loop after snap state is updated and mu released (V2, V3)
 	callbacks callbackRegistry
 
+	// disconnect callbacks — fired on CTRL_CLOSE with the classified reason
+	// (V38), separate from the packet-event registry since the payload is the
+	// client-side DisconnectReason
+	disconnectMu  sync.Mutex
+	disconnectID  uint64
+	disconnectCbs map[uint64]func(*Client, DisconnectReason)
+
 	// prediction input history — sent local inputs keyed by predicted tick,
 	// re-applied during prediction re-simulation (V9)
 	predInputs predInputBuffer
@@ -617,6 +624,7 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.errMu.Unlock()
 		c.log.Warn("server sent CLOSE", "reason", e.Reason, "kind", reason.Kind.String())
 		c.setErr(ErrServerClosed)
+		c.fireDisconnect(reason)
 	}
 
 	// Dispatch to registered callbacks after snap state is updated and any

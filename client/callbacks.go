@@ -122,3 +122,48 @@ func (c *Client) OnWeaponChange(fn func(*Client, packet.EventWeaponChange)) func
 func (c *Client) OnServerCapabilities(fn func(*Client, packet.EventServerCapabilities)) func() {
 	return On(c, fn)
 }
+
+// OnDisconnect registers a handler invoked when the server closes the
+// connection, with the classified reason (V38). Handlers fire serially on the
+// event-loop goroutine before any auto-reconnect attempt, so they must return
+// promptly (or spawn their own goroutine). The returned closure unregisters the
+// handler and is idempotent (V7).
+func (c *Client) OnDisconnect(fn func(*Client, DisconnectReason)) func() {
+	c.disconnectMu.Lock()
+	if c.disconnectCbs == nil {
+		c.disconnectCbs = make(map[uint64]func(*Client, DisconnectReason))
+	}
+	id := c.disconnectID
+	c.disconnectID++
+	c.disconnectCbs[id] = fn
+	c.disconnectMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.disconnectMu.Lock()
+			delete(c.disconnectCbs, id)
+			c.disconnectMu.Unlock()
+		})
+	}
+}
+
+// fireDisconnect invokes all disconnect handlers with the classified reason.
+// Handlers are snapshotted under the lock and called after release so a handler
+// may (un)register or call back into the client (V2).
+func (c *Client) fireDisconnect(reason DisconnectReason) {
+	c.disconnectMu.Lock()
+	if len(c.disconnectCbs) == 0 {
+		c.disconnectMu.Unlock()
+		return
+	}
+	hs := make([]func(*Client, DisconnectReason), 0, len(c.disconnectCbs))
+	for _, h := range c.disconnectCbs {
+		hs = append(hs, h)
+	}
+	c.disconnectMu.Unlock()
+
+	for _, h := range hs {
+		h(c, reason)
+	}
+}
