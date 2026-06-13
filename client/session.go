@@ -52,9 +52,30 @@ type Session interface {
 	// SendInput sends a player input message for the given tick.
 	SendInput(tick, predTick, inputSize int, inputData []byte) error
 
-	// SendChat sends a chat message.
+	// SendChat sends a public chat message.
 	SendChat(msg string) error
+
+	// SendChatTeam sends a chat message; team selects team vs all chat.
+	SendChatTeam(team bool, msg string) error
+
+	// SendWhisper sends a private message to a client (protocol-unified).
+	SendWhisper(toID int, msg string) error
 
 	// SendKill sends the /kill command.
 	SendKill() error
+
+	// SendEmoticon shows an emoticon above the player.
+	SendEmoticon(e packet.Emoticon) error
+
+	// SendSetTeam requests a team change.
+	SendSetTeam(team int) error
+
+	// SendSpectate sets the spectated client (or free-view).
+	SendSpectate(spectatorID int) error
+
+	// SendVote casts a yes/no vote on the running vote.
+	SendVote(approve bool) error
+
+	// SendCallVote starts a vote.
+	SendCallVote(voteType, value, reason string) error
 }

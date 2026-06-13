@@ -165,6 +165,40 @@ func GameClEmoticon(emoticon packet.Emoticon) []byte {
 	return data
 }
 
+// GameClVote builds a CL_VOTE chunk payload (1 yes, -1 no).
+func GameClVote(vote int) []byte {
+	var data []byte
+	data = append(data, packer.PackMsgID(MsgGameClVote, false)...)
+	data = append(data, packer.PackInt(vote)...)
+	return data
+}
+
+// GameClCallVote builds a CL_CALLVOTE chunk payload. 0.7 adds a Force flag
+// (always 0 here).
+func GameClCallVote(voteType, value, reason string) []byte {
+	var data []byte
+	data = append(data, packer.PackMsgID(MsgGameClCallVote, false)...)
+	data = append(data, packer.PackStr(voteType)...)
+	data = append(data, packer.PackStr(value)...)
+	data = append(data, packer.PackStr(reason)...)
+	data = append(data, packer.PackInt(0)...) // m_Force
+	return data
+}
+
+// GameClSetSpectatorMode builds a CL_SETSPECTATORMODE chunk payload. 0.7 takes
+// a spec mode plus a target id; mode 2 = SPEC_PLAYER when a valid id is given.
+func GameClSetSpectatorMode(spectatorID int) []byte {
+	mode := 0 // SPEC_FREEVIEW
+	if spectatorID >= 0 {
+		mode = 2 // SPEC_PLAYER
+	}
+	var data []byte
+	data = append(data, packer.PackMsgID(MsgGameClSetSpectatorMode, false)...)
+	data = append(data, packer.PackInt(mode)...)
+	data = append(data, packer.PackInt(spectatorID)...)
+	return data
+}
+
 // --- Chunk wrapping helper ---
 
 // WrapVitalChunk wraps a message payload in a vital chunk header (0.7 format, Split=6).

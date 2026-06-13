@@ -689,7 +689,47 @@ func (s *Session) SendChat(msg string) error {
 	return s.SendVitalMsg(GameClSay(false, msg))
 }
 
+// SendChatTeam sends a chat message to all or team.
+func (s *Session) SendChatTeam(team bool, msg string) error {
+	return s.SendVitalMsg(GameClSay(team, msg))
+}
+
+// SendWhisper sends a private message. 0.6 has no native whisper send; DDNet
+// accepts the "/whisper <id> <msg>" chat command.
+func (s *Session) SendWhisper(toID int, msg string) error {
+	return s.SendVitalMsg(GameClSay(false, fmt.Sprintf("/whisper %d %s", toID, msg)))
+}
+
 // SendKill sends the /kill command.
 func (s *Session) SendKill() error {
 	return s.SendVitalMsg(GameClKill())
+}
+
+// SendEmoticon shows an emoticon.
+func (s *Session) SendEmoticon(e packet.Emoticon) error {
+	return s.SendVitalMsg(GameClEmoticon(e))
+}
+
+// SendSetTeam requests a team change.
+func (s *Session) SendSetTeam(team int) error {
+	return s.SendVitalMsg(GameClSetTeam(team))
+}
+
+// SendSpectate sets the spectated client id.
+func (s *Session) SendSpectate(spectatorID int) error {
+	return s.SendVitalMsg(GameClSetSpectatorMode(spectatorID))
+}
+
+// SendVote casts a yes/no vote (1 = yes, -1 = no).
+func (s *Session) SendVote(approve bool) error {
+	v := -1
+	if approve {
+		v = 1
+	}
+	return s.SendVitalMsg(GameClVote(v))
+}
+
+// SendCallVote starts a vote.
+func (s *Session) SendCallVote(voteType, value, reason string) error {
+	return s.SendVitalMsg(GameClCallVote(voteType, value, reason))
 }
