@@ -39,7 +39,7 @@ type reader struct {
 func (s *Session) StartReader(ctx context.Context) {
 	s.reader.ctx, s.reader.cancel = context.WithCancel(ctx)
 	s.reader.eventCh = make(chan packet.Event, 128)
-	s.reader.snaps = packet.NewSnapStorage(nil)
+	s.reader.snaps = packet.NewSnapStorage(nil, packet.WithMaxSnaps(s.snapStorageSize))
 	s.reader.lastRecv.Store(time.Now().UnixNano())
 
 	go s.readLoop()

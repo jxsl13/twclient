@@ -51,19 +51,20 @@ const inputMinInterval = 100 * time.Millisecond
 type Client struct {
 	sess Session
 
-	address      string
-	name         string
-	clan         string
-	skin         string
-	country      int
-	password     string                    // server password, sent in handshake (V42); empty = unprotected
-	timeoutCode  string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
-	rconPassword string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
-	rconAuthed   bool                      // current rcon auth state (V44), protected by mu
-	caps         packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
-	version      packet.Version
-	mapCache     *packet.MapCache
-	log          *slog.Logger
+	address         string
+	name            string
+	clan            string
+	skin            string
+	country         int
+	password        string                    // server password, sent in handshake (V42); empty = unprotected
+	timeoutCode     string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
+	rconPassword    string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
+	rconAuthed      bool                      // current rcon auth state (V44), protected by mu
+	caps            packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
+	version         packet.Version
+	mapCache        *packet.MapCache
+	snapStorageSize int // packet.SnapStorage window for the session reader; 0 = default (V53)
+	log             *slog.Logger
 
 	// snap state — protected by mu
 	mu   sync.RWMutex
@@ -183,6 +184,15 @@ func WithMapCache(cache *packet.MapCache) Option {
 			c.mapCache = cache
 		}
 	}
+}
+
+// WithSnapStorageSize sets the retained-snapshot window (packet.SnapStorage
+// MaxSnaps) the session reader uses for delta decompression (V53). The default
+// (16) is kept when unset or zero; an out-of-range value is clamped by
+// packet.WithMaxSnaps. Larger windows tolerate more ack lag at the cost of
+// heap; smaller windows trim per-client memory at scale.
+func WithSnapStorageSize(n int) Option {
+	return func(c *Client) { c.snapStorageSize = n }
 }
 
 // WithPrediction enables DDNet-style client-side prediction of the local
@@ -670,10 +680,12 @@ func (c *Client) newSession() (Session, error) {
 		return net6.NewSession(c.address,
 			net6.WithLogger(c.log),
 			net6.WithMapCache(c.mapCache),
+			net6.WithSnapStorageSize(c.snapStorageSize),
 		)
 	case packet.Version07:
 		return net7.NewSession(c.address,
 			net7.WithLogger(c.log),
+			net7.WithSnapStorageSize(c.snapStorageSize),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", c.version)

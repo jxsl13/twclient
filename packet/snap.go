@@ -68,6 +68,34 @@ type SnapStorage struct {
 	ItemSizeFn func(typeID int) int // returns field count or -1; nil → always read from stream
 }
 
+// defaultMaxSnaps is the retained-snapshot window used when none is configured.
+// minMaxSnaps is the floor a configured window is clamped up to, so the
+// delta-decompression base (prev + current + slack) is always retained (V53).
+const (
+	defaultMaxSnaps = 16
+	minMaxSnaps     = 3
+)
+
+// SnapStorageOption configures a SnapStorage at construction time.
+type SnapStorageOption func(*SnapStorage)
+
+// WithMaxSnaps sets the retained-snapshot window (MaxSnaps). Invalid input is
+// clamped so a partial/bad value cannot break delta decoding (V41, V53):
+// n <= 0 falls back to the default (16); 0 < n < minMaxSnaps is raised to
+// minMaxSnaps so the server's delta base is never purged out from under us.
+func WithMaxSnaps(n int) SnapStorageOption {
+	return func(ss *SnapStorage) {
+		switch {
+		case n <= 0:
+			ss.MaxSnaps = defaultMaxSnaps
+		case n < minMaxSnaps:
+			ss.MaxSnaps = minMaxSnaps
+		default:
+			ss.MaxSnaps = n
+		}
+	}
+}
+
 // NewSnapStorage creates a new snap storage with the given item size function.
 // Pass nil to always read sizes from the stream.
 //
@@ -77,12 +105,19 @@ type SnapStorage struct {
 // normal ack lag; keeping it small matters at scale — every retained snapshot
 // holds a full copy of all item field slices, so a large window multiplied by
 // many concurrent clients dominates heap (see applyDelta allocations).
-func NewSnapStorage(itemSizeFn func(typeID int) int) *SnapStorage {
-	return &SnapStorage{
+//
+// The window defaults to 16; override it with WithMaxSnaps (V53). Options are
+// validated by their constructor, so a bad value never reaches MaxSnaps (V41).
+func NewSnapStorage(itemSizeFn func(typeID int) int, opts ...SnapStorageOption) *SnapStorage {
+	ss := &SnapStorage{
 		Snaps:      make(map[int]*Snapshot),
-		MaxSnaps:   16,
+		MaxSnaps:   defaultMaxSnaps,
 		ItemSizeFn: itemSizeFn,
 	}
+	for _, opt := range opts {
+		opt(ss)
+	}
+	return ss
 }
 
 // ProcessSnap unpacks a snapshot payload, applies the delta to the base snapshot

@@ -373,6 +373,18 @@ client deriveEvents|136 → 130|7024 → 6016|evs prealloc + append-into derive*
 all library pkgs (packer/packet/net6/net7/physics/client) green incl `-race`; behaviour unchanged (V48). cmd/ml fails under -race on a go4.org/unsafe/assume-no-moving-gc go1.26 dep panic — out of scope (cmd/ harness), pre-existing, unrelated to perf edits.
 DDNet/TW perf refs: snapshot item hashtable for O(1) item lookup (`snapshot.cpp` `CSnapshot::GetItemIndex`); fixed MAX_SNAPSHOT_SIZE preallocated buffers, ⊥ per-tick heap; varint packed into caller-owned buffers (`AppendVarint`). Go: `sync.Pool` for transient scratch (already in `deltaScratch`), preallocate slice cap, avoid `[]byte`↔`string` copies, escape-analysis (`go build -gcflags=-m`) to keep hot locals on stack.
 
+### snap storage size (T41)
+configurable retained-snapshot window for delta decompression. `packet.SnapStorage.MaxSnaps` (delta-base ring buffer, `packet/snap.go:64,83`) is HARDCODED to 16 in `NewSnapStorage` — expose as a client+session option. targets `packet.SnapStorage` (delta ring), ⊥ `client.SnapStorage` (per-player CharacterState tracking, `client/snap.go`) — distinct types, same name.
+```
+packet:  func NewSnapStorage(itemSizeFn func(int) int, opts ...SnapStorageOption) *SnapStorage   // variadic, backward-compat (no opt = default)
+         func WithMaxSnaps(n int) SnapStorageOption     // sets+validates MaxSnaps in ctor (V41); clamp invalid → default/min
+         default MaxSnaps = 16 (UNCHANGED when no opt)
+session: func WithSnapStorageSize(n int) Option         // net6 & net7 Session ctor opt (protocol-unified C2); stored on Session
+register: func WithSnapStorageSize(n int) Option        // Client; plumbs to session reader's packet.SnapStorage.MaxSnaps
+```
+plumb: `Client.WithSnapStorageSize(n)` → `net6/net7 NewSession(WithSnapStorageSize(n))` (in `Client.newSession`) → stored on Session → `StartReader` builds `packet.NewSnapStorage(SnapItemSize, WithMaxSnaps(n))` (`net6/reader.go:42`, `net7/reader.go:42`). net7 itemSizeFn stays nil. unset → 16.
+bounds: n ≤ 0 → default 16. n below the live delta-window min (server deltas against a recently-acked snap; purge at `snap.go:113-127` keys off `MaxSnaps`) → clamp UP, else the base the server deltas against gets purged → decode fails (V53).
+
 ## §V — invariants
 
 - V1: new event types ! implement `packet.Event` (`eventTag()`), emitted via `packet.SendEvent` on `EventCh()`. `packet/event.go`.
@@ -430,6 +442,7 @@ DDNet/TW perf refs: snapshot item hashtable for O(1) item lookup (`snapshot.cpp`
 - V50: snap delta item lookup O(1) — `applyDelta` resolves updated-item → existing-item via an index map (`itemKey`→idx), ⊥ O(numUpdated × items) linear scan (current `snap.go:231`). mirrors DDNet item hashtable. result identical to linear version (test parity).
 - V51: bounded alloc on steady-state hot paths — per-tick (snap decode, prediction tick, tickstate build, event diff) and per-message (unpack) paths reuse pooled/Reset buffers + preallocate slice cap; ⊥ unbounded per-call `make`. data RETAINED past the call (snapshot `Fields`, emitted events) is still freshly allocated/copied out — measured by `allocs/op` not zeroed blindly.
 - V52: pooled scratch ⊥ alias retained state — anything stored beyond the call (in a `Snapshot`, `TickState`, event) is COPIED out of pooled/`Reset` buffers before the buffer is reused or returned to the pool. ⊥ use-after-free / cross-tick aliasing. (safety corollary of V51; `-race` + parity tests guard.)
+- V53: snap storage size configurable — `packet.SnapStorage.MaxSnaps` (delta-base ring window) settable via `WithSnapStorageSize(n)` plumbed Client→net6/net7 Session→`NewSnapStorage(WithMaxSnaps(n))` (V41 ctor-validated, ⊥ raw literal mutation of MaxSnaps in the public path). default 16 UNCHANGED when unset (opt-in only, V48-style — existing behavior + tests identical with no opt). invalid `n ≤ 0` → default; `n` below the live delta-window min → clamp UP so purge (`snap.go:113-127`, keyed off MaxSnaps) ⊥ drop the base the server deltas against (too small → "snap: apply delta" decode failure). protocol-unified (net6+net7, C2). targets `packet.SnapStorage` (delta ring) ⊥ `client.SnapStorage` (per-player state).
 
 ## §T — tasks
 
@@ -486,9 +499,12 @@ T37|x|Unpacker reuse: pool/Reset across the 73 NewUnpacker sites (net6/net7 read
 T38|x|packer pack path: AppendInt/AppendStr/AppendMsgID into a reused builder buffer (keep PackInt etc as thin wrappers); GetStringSanitized preallocate buf by RemainingSize|V51,V48
 T39|x|client per-tick alloc cut: snap.go derive* append into one evs (cap=prev len), swap prev/cur maps instead of realloc, trim charactersCopy churn|V51,V52,V48
 T40|x|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
+T41|x|snap storage size option: packet `NewSnapStorage(fn, ...SnapStorageOption)` variadic + `WithMaxSnaps(n)` ctor-validated clamp (default 16, min=delta-window); net6/net7 Session `WithSnapStorageSize` opt → StartReader; Client `WithSnapStorageSize` Option plumb via `newSession`; ⊥ change default behavior|V53,V41,I.snapsize
+T42|.|tests: option sets MaxSnaps on both protocols; unset = 16 default; invalid (≤0)/too-small clamped; delta still decodes at configured size (parity vs default); ⊥ regress default|V53,V41,I.snapsize
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
 perf effort (library client, ⊥ racebot): T34–T40 = `.` (pending). build order: T34 (bench baseline) → T35 (profile/rank) → T36 (snap O(1)) → T37 (unpacker reuse) → T38 (packer pack) → T39 (client per-tick) → T40 (re-bench/verify). T34+T35 are measure-FIRST gates — ⊥ optimize (T36–T39) before profile confirms targets (V49).
+snap storage size config: T41–T42 = `.` (pending). build order: T41 (plumb option packet→session→client + clamp) → T42 (tests). additive opt-in, default unchanged (V53).
 build order: T29 (password) → T30 (rcon API) → T31 (rcon state+reactions) → T32 (rcon tests) → T22 (research wire) → T23 (disconnect classify) → T24 (timeout code send) → T25 (reconnect-with-timeout) → T26 (auto-reconnect loop) → T27 (OnDisconnect callback) → T28 (reconnect tests).
 prior build order (completed): T19 → T14 → T21 → T13 → T12 → T10a → T15 → T16 → T20 → T17.
 

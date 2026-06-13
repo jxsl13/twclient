@@ -48,6 +48,13 @@ func WithMapCache(cache *packet.MapCache) Option {
 	}
 }
 
+// WithSnapStorageSize sets the retained-snapshot window (packet.SnapStorage
+// MaxSnaps) used by the reader for delta decompression (V53). Zero or unset
+// keeps the default; the value is validated by packet.WithMaxSnaps.
+func WithSnapStorageSize(n int) Option {
+	return func(s *Session) { s.snapStorageSize = n }
+}
+
 // Session tracks the connection state for a 0.6 / DDNet client session.
 type Session struct {
 	conn          *network.Conn
@@ -65,6 +72,8 @@ type Session struct {
 	parsed        *twmap.Map
 	mapCache      *packet.MapCache // always set: shared or per-session
 	reader        reader           // background reader state (activated by StartReader)
+
+	snapStorageSize int // configured packet.SnapStorage window; 0 = default (V53)
 
 	capsMu sync.RWMutex
 	caps   packet.ServerCapabilities // DDNet server capabilities (T33, V47)
