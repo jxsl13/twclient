@@ -1,7 +1,7 @@
 package packer
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 )
 
@@ -39,7 +39,7 @@ func getStringSanitizedRef(u *Unpacker, flags int) (string, error) {
 }
 
 func TestGetStringSanitizedParity(t *testing.T) {
-	rng := rand.New(rand.NewSource(7))
+	rng := rand.New(rand.NewPCG(7, 11))
 	flagSets := []int{
 		0,
 		SanitizeDefault,
@@ -49,24 +49,24 @@ func TestGetStringSanitizedParity(t *testing.T) {
 		SanitizeCC | SanitizeSkipWhitespaces,
 	}
 	for iter := range 5000 {
-		n := rng.Intn(20)
+		n := rng.IntN(20)
 		raw := make([]byte, n)
 		for i := range raw {
 			// Bias toward control chars, spaces, and printable to exercise paths.
-			switch rng.Intn(4) {
+			switch rng.IntN(4) {
 			case 0:
-				raw[i] = byte(rng.Intn(32)) // control (avoid NUL handled below)
+				raw[i] = byte(rng.IntN(32)) // control (avoid NUL handled below)
 			case 1:
 				raw[i] = ' '
 			default:
-				raw[i] = byte(32 + rng.Intn(95))
+				raw[i] = byte(32 + rng.IntN(95))
 			}
 			if raw[i] == 0 {
 				raw[i] = 1 // keep NUL only as the terminator
 			}
 		}
 		data := append(append([]byte(nil), raw...), 0)
-		flags := flagSets[rng.Intn(len(flagSets))]
+		flags := flagSets[rng.IntN(len(flagSets))]
 
 		got, errG := NewUnpacker(data).GetStringSanitized(flags)
 		want, errW := getStringSanitizedRef(NewUnpacker(data), flags)

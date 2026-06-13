@@ -1,7 +1,7 @@
 package packet
 
 import (
-	"math/rand"
+	"math/rand/v2"
 	"reflect"
 	"testing"
 
@@ -107,24 +107,24 @@ func randDelta(rng *rand.Rand) (base *Snapshot, data []byte, sizeFn func(int) in
 		return -1
 	}
 
-	nBase := rng.Intn(40)
+	nBase := rng.IntN(40)
 	base = &Snapshot{Tick: 100}
 	type key struct{ t, id int }
 	used := map[key]bool{}
 	for range nBase {
-		t := []int{9, 10, 5, 99}[rng.Intn(4)] // 99 = unknown (stream size)
-		id := rng.Intn(64)
+		t := []int{9, 10, 5, 99}[rng.IntN(4)] // 99 = unknown (stream size)
+		id := rng.IntN(64)
 		if used[key{t, id}] {
 			continue
 		}
 		used[key{t, id}] = true
 		size := sizeFn(t)
 		if size < 0 {
-			size = 1 + rng.Intn(8)
+			size = 1 + rng.IntN(8)
 		}
 		f := make([]int, size)
 		for i := range f {
-			f[i] = rng.Intn(2000) - 1000
+			f[i] = rng.IntN(2000) - 1000
 		}
 		base.Items = append(base.Items, SnapItem{TypeID: t, ID: id, Fields: f})
 	}
@@ -132,7 +132,7 @@ func randDelta(rng *rand.Rand) (base *Snapshot, data []byte, sizeFn func(int) in
 	// Build delta: delete some base items, update some (existing + new).
 	var deletes []int
 	for _, it := range base.Items {
-		if rng.Intn(3) == 0 {
+		if rng.IntN(3) == 0 {
 			deletes = append(deletes, (it.TypeID<<16)|it.ID)
 		}
 	}
@@ -142,21 +142,21 @@ func randDelta(rng *rand.Rand) (base *Snapshot, data []byte, sizeFn func(int) in
 	}
 	var upds []upd
 	updUsed := map[key]bool{}
-	nUpd := rng.Intn(40)
+	nUpd := rng.IntN(40)
 	for range nUpd {
-		t := []int{9, 10, 5, 99}[rng.Intn(4)]
-		id := rng.Intn(64)
+		t := []int{9, 10, 5, 99}[rng.IntN(4)]
+		id := rng.IntN(64)
 		if updUsed[key{t, id}] {
 			continue
 		}
 		updUsed[key{t, id}] = true
 		size := sizeFn(t)
 		if size < 0 {
-			size = 1 + rng.Intn(8)
+			size = 1 + rng.IntN(8)
 		}
 		f := make([]int, size)
 		for i := range f {
-			f[i] = rng.Intn(2000) - 1000
+			f[i] = rng.IntN(2000) - 1000
 		}
 		upds = append(upds, upd{t, id, size, f})
 	}
@@ -181,7 +181,7 @@ func randDelta(rng *rand.Rand) (base *Snapshot, data []byte, sizeFn func(int) in
 }
 
 func TestApplyDeltaParity(t *testing.T) {
-	rng := rand.New(rand.NewSource(1))
+	rng := rand.New(rand.NewPCG(1, 2))
 	for iter := range 2000 {
 		base, data, sizeFn := randDelta(rng)
 		got, errG := applyDelta(base, 101, data, sizeFn)

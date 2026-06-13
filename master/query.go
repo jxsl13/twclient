@@ -3,7 +3,7 @@ package master
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -77,7 +77,7 @@ func QueryServerInfo(ctx context.Context, version packet.Version, addr string, o
 // --- 0.6 ---
 
 func query6(ctx context.Context, conn *network.Conn) (ServerInfo, error) {
-	token := byte(rand.Intn(256))
+	token := byte(rand.IntN(256))
 	if err := conn.SendRaw(net6.BuildInfoRequestConnless(token)); err != nil {
 		return ServerInfo{}, fmt.Errorf("master: 0.6 send getinfo: %w", err)
 	}
@@ -164,7 +164,7 @@ func query7(ctx context.Context, conn *network.Conn) (ServerInfo, error) {
 	}
 
 	// 2. Connless getinfo, framed by net7's connless helper.
-	gi := net7.BuildInfoRequestConnless(serverToken, clientToken, int(rand.Int31()))
+	gi := net7.BuildInfoRequestConnless(serverToken, clientToken, int(rand.Int32()))
 	if err := conn.SendRaw(gi); err != nil {
 		return ServerInfo{}, fmt.Errorf("master: 0.7 send getinfo: %w", err)
 	}
