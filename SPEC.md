@@ -500,7 +500,7 @@ T38|x|packer pack path: AppendInt/AppendStr/AppendMsgID into a reused builder bu
 T39|x|client per-tick alloc cut: snap.go derive* append into one evs (cap=prev len), swap prev/cur maps instead of realloc, trim charactersCopy churn|V51,V52,V48
 T40|x|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
 T41|x|snap storage size option: packet `NewSnapStorage(fn, ...SnapStorageOption)` variadic + `WithMaxSnaps(n)` ctor-validated clamp (default 16, min=delta-window); net6/net7 Session `WithSnapStorageSize` opt → StartReader; Client `WithSnapStorageSize` Option plumb via `newSession`; ⊥ change default behavior|V53,V41,I.snapsize
-T42|.|tests: option sets MaxSnaps on both protocols; unset = 16 default; invalid (≤0)/too-small clamped; delta still decodes at configured size (parity vs default); ⊥ regress default|V53,V41,I.snapsize
+T42|x|tests: option sets MaxSnaps on both protocols; unset = 16 default; invalid (≤0)/too-small clamped; delta still decodes at configured size (parity vs default); ⊥ regress default|V53,V41,I.snapsize
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
 perf effort (library client, ⊥ racebot): T34–T40 = `.` (pending). build order: T34 (bench baseline) → T35 (profile/rank) → T36 (snap O(1)) → T37 (unpacker reuse) → T38 (packer pack) → T39 (client per-tick) → T40 (re-bench/verify). T34+T35 are measure-FIRST gates — ⊥ optimize (T36–T39) before profile confirms targets (V49).
