@@ -286,6 +286,24 @@ func (c *Client) PredictedCharacters() map[int]CharacterState {
 	return base
 }
 
+// RangePlayers calls fn for each player in the latest snapshot, keyed by client
+// ID, and stops early if fn returns false. It holds the read lock for the
+// duration and yields each CharacterState BY VALUE without allocating a result
+// map — a zero-allocation alternative to PredictedCharacters for read-only
+// loops (e.g. scanning all players each tick). The states are RAW snapshot
+// values (prediction-off semantics); use PredictedCharacters when you need the
+// predicted local/antiping positions. fn must not retain references beyond the
+// call and must not call back into the Client (it runs under the read lock).
+func (c *Client) RangePlayers(fn func(id int, ch CharacterState) bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for id, ch := range c.snap.characters {
+		if !fn(id, ch) {
+			return
+		}
+	}
+}
+
 // PredictedProjectiles returns every projectile from the latest snapshot with
 // its position advanced to the predicted tick using the ballistic model
 // (V9, B2). With prediction disabled the positions are the snapshot's current
