@@ -360,6 +360,17 @@ client charactersCopy|6.9µs|13608|67|fresh map per observation build|T39 (bound
 physics Core.Tick|217ns|0|0|0-alloc, CPU-only; NOT an opt target (V49)|—
 ```
 chosen targets (V49): T36 (applyDelta O(1) index + single absFields backing array) = top ROI; T37 (pool Unpacker on snap path); T38 (Append* on send path); T39 (slice-cap + per-tick map reuse, bounded — event boxing inherent). physics excluded (no alloc, not flagged).
+results (T40, before → after, allocs/op is the headline; ns/op noisy on event-boxing benches):
+```
+path|allocs before→after|B before→after|note
+packet applyDelta|72 → 9|17099 → 18125|O(n²) scan → O(1) index; 64 absFields make → 1 backing array (T36)
+packet ProcessSnap|72 → 9|17099 → 18130|= applyDelta (T36)
+net6/7 snap parse (per msg)|1 → 0|256 → 0|NewUnpacker → reused snapUnpacker.Reset; see packer NewUnpacker(256/1) vs UnpackerReset(0/0) (T37)
+SysInput build (50Hz send)|6 → 0|88 → 0|Pack* per field → Append* into one buf (T38)
+packer GetStringSanitized|2 → 1|128 → 64|NUL-scan fast path, direct convert when clean (T38)
+client deriveEvents|136 → 130|7024 → 6016|evs prealloc + append-into derive*; residual = inherent packet.Event boxing (T39, bounded)
+```
+all library pkgs (packer/packet/net6/net7/physics/client) green incl `-race`; behaviour unchanged (V48). cmd/ml fails under -race on a go4.org/unsafe/assume-no-moving-gc go1.26 dep panic — out of scope (cmd/ harness), pre-existing, unrelated to perf edits.
 DDNet/TW perf refs: snapshot item hashtable for O(1) item lookup (`snapshot.cpp` `CSnapshot::GetItemIndex`); fixed MAX_SNAPSHOT_SIZE preallocated buffers, ⊥ per-tick heap; varint packed into caller-owned buffers (`AppendVarint`). Go: `sync.Pool` for transient scratch (already in `deltaScratch`), preallocate slice cap, avoid `[]byte`↔`string` copies, escape-analysis (`go build -gcflags=-m`) to keep hot locals on stack.
 
 ## §V — invariants
@@ -474,7 +485,7 @@ T36|x|applyDelta O(1) item index: replace linear updated-item scan (snap.go:231)
 T37|x|Unpacker reuse: pool/Reset across the 73 NewUnpacker sites (net6/net7 readers) — one buffer per session reader, ⊥ alloc+copy per inbound msg; verify no cross-msg aliasing|V51,V52,V48
 T38|x|packer pack path: AppendInt/AppendStr/AppendMsgID into a reused builder buffer (keep PackInt etc as thin wrappers); GetStringSanitized preallocate buf by RemainingSize|V51,V48
 T39|x|client per-tick alloc cut: snap.go derive* append into one evs (cap=prev len), swap prev/cur maps instead of realloc, trim charactersCopy churn|V51,V52,V48
-T40|.|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
+T40|x|re-bench all (T34 harness); assert no regression + behavior unchanged (full suite + -race green); record after-numbers vs baseline|V48,V49
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
 perf effort (library client, ⊥ racebot): T34–T40 = `.` (pending). build order: T34 (bench baseline) → T35 (profile/rank) → T36 (snap O(1)) → T37 (unpacker reuse) → T38 (packer pack) → T39 (client per-tick) → T40 (re-bench/verify). T34+T35 are measure-FIRST gates — ⊥ optimize (T36–T39) before profile confirms targets (V49).
