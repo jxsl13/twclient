@@ -317,7 +317,7 @@ T15|x|Observer (many, view-only) + Controller (one, view+action) interfaces; Add
 T16|x|tick driver: ONE buildTickState per (tick,intra) shared across consumers; dispatch to all observers + controller by Mode; apply controller []Action via Do|V19,V20,V21,V24,V31,I.consumer
 T17|.|tests: Action↔send both protocols; TickState complete; both cadences share builder; one Frontend serves UI+ML plugs; MapView tiles + Window crop correct|V18,V19,V20,V22,V24
 T19|x|consolidate redundant types: canonical CharacterState/Vec2/PlayerInput/Weapon/Tuning + single conversion sites; audit & remove dup impls; ⊥ phantom PredictedCharacter|V25
-T20|.|ML observation: ego-centric FIXED multi-channel window — ALL static planes (collision+freeze+death+tele+speedup+switch+tune-zone) + per-tile tuning planes (TuningAt per cell) + ALL dynamic entity planes + agent scalars (weapon/hp/vel/hook/active-tuning/tune-zone); config size, square default, OOB=Solid|V26,V27,V28,V30,I.mapview,I.consumer
+T20|x|ML observation: ego-centric FIXED multi-channel window — ALL static planes (collision+freeze+death+tele+speedup+switch+tune-zone) + per-tile tuning planes (TuningAt per cell) + ALL dynamic entity planes + agent scalars (weapon/hp/vel/hook/active-tuning/tune-zone); config size, square default, OOB=Solid|V26,V27,V28,V30,I.mapview,I.consumer
 T21|x|position-dependent tuning: per-tune-zone tuning store; Client.TuningAt(tx,ty) over any tile/window; ActiveTuning; default←Sv_TuneParams; feed predicted world per char's zone; expose in TickState|V29,V30,V9b,I.consumer
 ```
 order: done = T2–T10, T11. active: T19 (consolidate) + T10a (smoothing) + T12–T17, T20, T21.
