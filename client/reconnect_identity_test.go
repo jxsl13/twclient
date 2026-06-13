@@ -16,7 +16,7 @@ func TestReconnectPreservesIdentity(t *testing.T) {
 		WithTimeoutCode("code123"),
 	)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	// The address is unreachable, so this fails — that's fine; we only assert
 	// the identity survives the attempt.

@@ -27,7 +27,7 @@ func TestWithSnapStorageSize(t *testing.T) {
 			}
 			defer s.Close()
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			s.StartReader(ctx)
 			defer s.StopReader()
@@ -59,7 +59,7 @@ func TestWithEventChanSize(t *testing.T) {
 				t.Fatalf("NewSession: %v", err)
 			}
 			defer s.Close()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			s.StartReader(ctx)
 			defer s.StopReader()

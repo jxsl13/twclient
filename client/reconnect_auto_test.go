@@ -31,7 +31,7 @@ func TestReconnectLoopMaxAttempts(t *testing.T) {
 	pol := NewReconnectPolicy(WithBackoff(fb), WithMaxAttempts(3))
 
 	done := make(chan struct{})
-	go func() { c.reconnectLoop(context.Background(), pol); close(done) }()
+	go func() { c.reconnectLoop(t.Context(), pol); close(done) }()
 
 	select {
 	case <-done:
@@ -52,7 +52,7 @@ func TestReconnectLoopCtxAbort(t *testing.T) {
 	c := New("localhost")
 	pol := NewReconnectPolicy(WithBackoff(fb))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() { c.reconnectLoop(ctx, pol); close(done) }()
 
@@ -71,7 +71,7 @@ func TestReconnectLoopCloseAbort(t *testing.T) {
 	pol := NewReconnectPolicy(WithBackoff(fb))
 
 	done := make(chan struct{})
-	go func() { c.reconnectLoop(context.Background(), pol); close(done) }()
+	go func() { c.reconnectLoop(t.Context(), pol); close(done) }()
 
 	_ = c.Close()
 	select {
@@ -85,12 +85,12 @@ func TestReconnectLoopCloseAbort(t *testing.T) {
 func TestMaybeAutoReconnectGating(t *testing.T) {
 	// Disabled policy → no loop (would panic on nil ctx handling otherwise).
 	c := New("localhost", WithoutAutoReconnect())
-	c.connectCtx = context.Background()
+	c.connectCtx = t.Context()
 	c.maybeAutoReconnect() // must be a no-op
 
 	// Closing → no loop.
 	c2 := New("localhost")
-	c2.connectCtx = context.Background()
+	c2.connectCtx = t.Context()
 	c2.closing.Store(true)
 	c2.maybeAutoReconnect()
 }

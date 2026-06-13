@@ -17,7 +17,7 @@ func TestLiveFetchServerList(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live master fetch; skipped under -short")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
 	entries, err := New().FetchServerList(ctx)
@@ -51,7 +51,7 @@ func TestLiveQueryServerInfo(t *testing.T) {
 	if testing.Short() {
 		t.Skip("live server query; skipped under -short")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
 	c := New(WithQueryTimeout(5 * time.Second))

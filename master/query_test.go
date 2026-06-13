@@ -1,7 +1,6 @@
 package master
 
 import (
-	"context"
 	"net"
 	"testing"
 	"time"
@@ -97,7 +96,7 @@ func TestQueryServerInfo06(t *testing.T) {
 		return reply
 	})
 
-	info, err := New(WithQueryTimeout(2*time.Second)).QueryServerInfo(context.Background(), packet.Version06, addr)
+	info, err := New(WithQueryTimeout(2*time.Second)).QueryServerInfo(t.Context(), packet.Version06, addr)
 	if err != nil {
 		t.Fatalf("query 0.6: %v", err)
 	}
@@ -127,7 +126,7 @@ func TestQueryServerInfo07(t *testing.T) {
 		return reply
 	})
 
-	info, err := New(WithQueryTimeout(2*time.Second)).QueryServerInfo(context.Background(), packet.Version07, addr)
+	info, err := New(WithQueryTimeout(2*time.Second)).QueryServerInfo(t.Context(), packet.Version07, addr)
 	if err != nil {
 		t.Fatalf("query 0.7: %v", err)
 	}

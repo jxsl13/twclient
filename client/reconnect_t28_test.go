@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"testing"
 )
 
@@ -33,7 +32,7 @@ func TestCloseSendsCleanDisconnect(t *testing.T) {
 		t.Error("client should be marked closing after Close")
 	}
 	// After a deliberate Close, auto-reconnect must not start.
-	c.connectCtx = context.Background()
+	c.connectCtx = t.Context()
 	c.maybeAutoReconnect()
 	// closed channel is shut; a reconnect loop would observe it immediately.
 	select {
@@ -64,7 +63,7 @@ func TestReconnectLoopResetsBackoff(t *testing.T) {
 	fb := &fakeBackoff{}
 	c := New("localhost")
 	pol := NewReconnectPolicy(WithBackoff(fb), WithMaxAttempts(1))
-	c.reconnectLoop(context.Background(), pol)
+	c.reconnectLoop(t.Context(), pol)
 	if fb.resets.Load() != 1 {
 		t.Errorf("backoff resets = %d, want 1 at cycle start", fb.resets.Load())
 	}

@@ -34,7 +34,7 @@ var errDown = errors.New("down")
 func TestFailoverPolicy(t *testing.T) {
 	masters := []string{"a", "b", "c"}
 	try, hits := newTry(masters, map[string]error{"a": errDown})
-	got, err := Failover().Fetch(context.Background(), masters, try)
+	got, err := Failover().Fetch(t.Context(), masters, try)
 	if err != nil || len(got) != 1 || got[0].Location != "b" {
 		t.Fatalf("got %+v err=%v, want b", got, err)
 	}
@@ -49,7 +49,7 @@ func TestRoundRobinPolicy(t *testing.T) {
 	p := RoundRobin()
 	try, hits := newTry(masters, nil) // all succeed
 	for range 3 {
-		if _, err := p.Fetch(context.Background(), masters, try); err != nil {
+		if _, err := p.Fetch(t.Context(), masters, try); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -65,7 +65,7 @@ func TestRoundRobinPolicy(t *testing.T) {
 func TestRoundRobinFailover(t *testing.T) {
 	masters := []string{"a", "b"}
 	try, _ := newTry(masters, map[string]error{"a": errDown})
-	got, err := RoundRobin().Fetch(context.Background(), masters, try)
+	got, err := RoundRobin().Fetch(t.Context(), masters, try)
 	if err != nil || len(got) == 0 {
 		t.Fatalf("want recovery via b, got err=%v", err)
 	}
@@ -78,7 +78,7 @@ func TestChooseFastestCachesBest(t *testing.T) {
 	p := ChooseFastest()
 	try, hits := newTry(masters, nil) // all valid
 
-	first, err := p.Fetch(context.Background(), masters, try)
+	first, err := p.Fetch(t.Context(), masters, try)
 	if err != nil || len(first) == 0 {
 		t.Fatalf("first fetch failed: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestChooseFastestCachesBest(t *testing.T) {
 	}
 
 	// Second call reuses the cached best → exactly one more hit total.
-	if _, err := p.Fetch(context.Background(), masters, try); err != nil {
+	if _, err := p.Fetch(t.Context(), masters, try); err != nil {
 		t.Fatal(err)
 	}
 	if total() != afterProbe+1 {
@@ -124,12 +124,12 @@ func TestChooseFastestReprobeOnFailure(t *testing.T) {
 		return []ServerEntry{{Location: url}}, nil
 	}
 	p := ChooseFastest()
-	got, _ := p.Fetch(context.Background(), masters, try)
+	got, _ := p.Fetch(t.Context(), masters, try)
 	cached := got[0].Location
 
 	// Take the cached master down → next call must re-probe and find the other.
 	down[cached].Store(true)
-	got2, err := p.Fetch(context.Background(), masters, try)
+	got2, err := p.Fetch(t.Context(), masters, try)
 	if err != nil || len(got2) == 0 || got2[0].Location == cached {
 		t.Fatalf("re-probe should find a different live master, got %+v err=%v", got2, err)
 	}
@@ -141,7 +141,7 @@ func TestPoliciesAllDown(t *testing.T) {
 	allDown := map[string]error{"a": errDown, "b": errDown}
 	for name, p := range map[string]RequestPolicy{"failover": Failover(), "roundrobin": RoundRobin(), "fastest": ChooseFastest()} {
 		try, _ := newTry(masters, allDown)
-		if _, err := p.Fetch(context.Background(), masters, try); err == nil {
+		if _, err := p.Fetch(t.Context(), masters, try); err == nil {
 			t.Errorf("%s: want error when all masters down", name)
 		}
 	}
@@ -151,7 +151,7 @@ func TestPoliciesAllDown(t *testing.T) {
 func TestPoliciesNoMasters(t *testing.T) {
 	try, _ := newTry(nil, nil)
 	for _, p := range []RequestPolicy{Failover(), RoundRobin(), ChooseFastest()} {
-		if _, err := p.Fetch(context.Background(), nil, try); err == nil {
+		if _, err := p.Fetch(t.Context(), nil, try); err == nil {
 			t.Error("want error with no masters")
 		}
 	}

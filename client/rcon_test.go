@@ -62,7 +62,7 @@ func TestRconLoginAwaitsAuth(t *testing.T) {
 	s := &stubSession{}
 	c.sess = s
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- c.RconLogin(ctx, "pw") }()
@@ -139,7 +139,7 @@ func TestRconLoginTimeout(t *testing.T) {
 	c := New("localhost:8303")
 	c.sess = &stubSession{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
 	defer cancel()
 	if err := c.RconLogin(ctx, "pw"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("want DeadlineExceeded, got %v", err)
