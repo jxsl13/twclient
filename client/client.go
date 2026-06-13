@@ -66,6 +66,7 @@ type Client struct {
 	snapStorageSize  int // packet.SnapStorage window for the session reader; 0 = default (V53)
 	predInputRingLen int // prediction input ring size; 0 = default (V54)
 	eventChanSize    int // session reader event-channel buffer; 0 = default (V54)
+	readBufferSize   int // UDP receive-buffer size; 0 = default (V54)
 	log              *slog.Logger
 
 	// snap state — protected by mu
@@ -210,6 +211,13 @@ func WithPredInputRingSize(n int) Option {
 // absorbs bigger event bursts before the event loop drains them.
 func WithEventChanSize(n int) Option {
 	return func(c *Client) { c.eventChanSize = n }
+}
+
+// WithReadBufferSize overrides the UDP socket receive-buffer size (V54). The
+// default (2MB) is kept when unset or zero; the OS clamps to its rmem_max. A
+// larger buffer reduces snapshot loss under burst load at scale.
+func WithReadBufferSize(n int) Option {
+	return func(c *Client) { c.readBufferSize = n }
 }
 
 // WithPrediction enables DDNet-style client-side prediction of the local
@@ -701,12 +709,14 @@ func (c *Client) newSession() (Session, error) {
 			net6.WithMapCache(c.mapCache),
 			net6.WithSnapStorageSize(c.snapStorageSize),
 			net6.WithEventChanSize(c.eventChanSize),
+			net6.WithReadBufferSize(c.readBufferSize),
 		)
 	case packet.Version07:
 		return net7.NewSession(c.address,
 			net7.WithLogger(c.log),
 			net7.WithSnapStorageSize(c.snapStorageSize),
 			net7.WithEventChanSize(c.eventChanSize),
+			net7.WithReadBufferSize(c.readBufferSize),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", c.version)

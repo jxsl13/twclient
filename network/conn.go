@@ -22,15 +22,21 @@ func defaultReadTimeout() time.Duration {
 	return 5 * time.Second
 }
 
+// defaultReadBufferSize is the UDP socket receive-buffer size used when none is
+// configured (V54). 2MB absorbs burst snapshot delivery when many bots share
+// scheduling time; the default (786KB) can overflow.
+const defaultReadBufferSize = 2 * 1024 * 1024
+
 // Conn wraps a raw UDP connection for sending and receiving teeworlds packets.
 // Timeouts are set at construction time via DialOption and are immutable
 // afterwards. Use context.WithTimeout for one-off deadline overrides.
 type Conn struct {
-	conn         *net.UDPConn
-	addr         *net.UDPAddr
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	log          *slog.Logger
+	conn           *net.UDPConn
+	addr           *net.UDPAddr
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	readBufferSize int
+	log            *slog.Logger
 }
 
 // DialOption configures a Conn at construction time.
@@ -55,6 +61,16 @@ func WithLogger(logger *slog.Logger) DialOption {
 	}
 }
 
+// WithReadBufferSize overrides the UDP socket receive-buffer size (V54). Zero
+// or negative keeps the default (2MB); the OS further clamps to its rmem_max.
+func WithReadBufferSize(n int) DialOption {
+	return func(c *Conn) {
+		if n > 0 {
+			c.readBufferSize = n
+		}
+	}
+}
+
 // Dial creates a new UDP connection to the given address.
 func Dial(address string, opts ...DialOption) (*Conn, error) {
 	addr, err := net.ResolveUDPAddr("udp", address)
@@ -65,20 +81,21 @@ func Dial(address string, opts ...DialOption) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dial: dial %q: %w", address, err)
 	}
-	// Increase receive buffer to 2MB to absorb burst snapshot delivery.
-	// Default (786KB) can overflow when many bots share scheduling time.
-	_ = udp.SetReadBuffer(2 * 1024 * 1024)
 	rt := defaultReadTimeout()
 	c := &Conn{
-		conn:         udp,
-		addr:         addr,
-		readTimeout:  rt,
-		writeTimeout: rt,
-		log:          slog.New(slog.DiscardHandler),
+		conn:           udp,
+		addr:           addr,
+		readTimeout:    rt,
+		writeTimeout:   rt,
+		readBufferSize: defaultReadBufferSize,
+		log:            slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
+	// Enlarge the receive buffer to absorb burst snapshot delivery; the OS
+	// default (786KB) can overflow when many bots share scheduling time (V54).
+	_ = udp.SetReadBuffer(c.readBufferSize)
 	return c, nil
 }
 

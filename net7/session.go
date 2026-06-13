@@ -53,6 +53,12 @@ func WithEventChanSize(n int) Option {
 	return func(s *Session) { s.eventChanSize = n }
 }
 
+// WithReadBufferSize overrides the UDP receive-buffer size (V54). Zero or unset
+// keeps the default (2MB); forwarded to network.Dial.
+func WithReadBufferSize(n int) Option {
+	return func(s *Session) { s.readBufferSize = n }
+}
+
 // Session tracks the connection state for a 0.7 client session.
 type Session struct {
 	conn        *network.Conn
@@ -72,6 +78,7 @@ type Session struct {
 
 	snapStorageSize int // configured packet.SnapStorage window; 0 = default (V53)
 	eventChanSize   int // configured reader event-channel buffer; 0 = default (V54)
+	readBufferSize  int // configured UDP receive-buffer size; 0 = default (V54)
 }
 
 // NewSession creates a new 0.7 session against the given address.
@@ -81,7 +88,10 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 	for _, opt := range opts {
 		opt(tmp)
 	}
-	conn, err := network.Dial(address, network.WithLogger(tmp.log))
+	conn, err := network.Dial(address,
+		network.WithLogger(tmp.log),
+		network.WithReadBufferSize(tmp.readBufferSize),
+	)
 	if err != nil {
 		return nil, err
 	}
