@@ -407,7 +407,7 @@ plumb: same Client → Session → {reader | network.Dial} path as V53 (`Client.
 NOT tunable (V55, wire-format — changing breaks the protocol): `MaxPacketSize` 1400, `MaxSequence` 1024, `HeaderSize` 7 / `HeaderSizeConnless` 9, `TokenRequestDataSize` 512, net7 `AntiReflectionSize`. keepalive (2s) / reack (500ms) intervals = timing, out of scope here (`?` — add later if wanted).
 
 ### master server list + server info (T46–T47)
-fetch the DDNet master server list over HTTPS+JSON, and query a single server's info CONNLESS (no login). new top-level package `master` holds the browser types + both entry points; net6/net7 gain the connless info request/parse helpers. stdlib only — `net/http` + `encoding/json` + `crypto/tls` default (C1: ⊥ new deps).
+fetch the DDNet master server list over HTTPS+JSON, and query a single server's info CONNLESS (no login). new top-level package `master` holds the browser types + both entry points; net6/net7 gain the connless info request/framing helpers (build + strip + token handshake), so `master` composes helpers and never hand-rolls wire bytes (V59). stdlib only — `net/http` + `encoding/json` + `crypto/tls` default (C1: ⊥ new deps).
 ```
 master (new pkg; imports net6/net7 + network + packet; ⊥ imported by them — no cycle):
   DDNet masters (HTTPS, failover): master1.ddnet.org … master4.ddnet.org, path /ddnet/15/servers.json (? "15" = master proto ver, confirm)
@@ -421,10 +421,20 @@ master (new pkg; imports net6/net7 + network + packet; ⊥ imported by them — 
   json: tolerant decode — unknown fields ignored (forward-compat); an address with an unknown scheme is SKIPPED, ⊥ fails the whole list (V56).
 connless server info (query ONE server directly, no session/handshake/login):
   func QueryServerInfo(ctx, version packet.Version, addr string, opts ...) (ServerInfo, error)   // master pkg
-  flow: open UDP (network.Dial), send connless INFO request, recv connless response, parse → ServerInfo (incl. Clients player list). ctx-bounded; ⊥ Login/Handshake (V57).
-  helpers (version-aware, connless flag already in headers):
-    net6: BuildInfoRequestConnless(token) []byte ; ParseInfoResponseConnless([]byte) (ServerInfo,error)   // 0.6 "gie3"/extended info (? exact token+layout, ref §R)
-    net7: BuildInfoRequestConnless(token) []byte ; ParseInfoResponseConnless([]byte) (ServerInfo,error)   // 0.7 differs (? confirm)
+  flow: open UDP (network.Dial), build the connless getinfo via net6/net7 HELPERS, recv, strip the
+    connless framing via helpers, then decode the body with packer → ServerInfo (incl. Clients). ctx-bounded; ⊥ Login/Handshake (V57).
+  master ⊥ hand-roll any wire bytes — connless framing/handshake comes from net6/net7; body decode uses packer (V59).
+shared connless magics (packet, used by both protocols):
+  var packet.ServerBrowseGetInfo = {255,255,255,255,'g','i','e','3'} ; packet.ServerBrowseInfo = {…,'i','n','f','3'}
+net6 helpers (in net6/builder.go beside BuildConnect/BuildChunkPacket — same home as every other Build*):
+  func BuildInfoRequestConnless(reqToken byte) []byte           // 6×0xFF + GETINFO + token (real TW connless framing, ⊥ the header connless bit)
+  func ConnlessInfoPayload(datagram []byte) ([]byte, bool)      // strip 6×0xFF + verify INFO magic → body after magic
+net7 helpers (in net7/builder.go beside BuildTokenRequest/BuildConnect):
+  func BuildInfoRequestConnless(serverToken, clientToken packet.Token, reqToken int) []byte   // Header{Connless}.Pack + GETINFO + PackInt(reqToken)
+  func ParseTokenResponse(datagram []byte) (packet.Token, bool) // extract server token from the NET_CTRLMSG_TOKEN reply (shares Handshake's offsets)
+  func ConnlessInfoPayload(datagram []byte) ([]byte, bool)      // strip 9-byte connless header + verify INFO magic → body
+  (BuildTokenRequest already exists; QueryServerInfo 0.7 = BuildTokenRequest → ParseTokenResponse → BuildInfoRequestConnless)
+  body decode stays in master (parseInfo6 decimal-string ints / parseInfo7 varint ints) — returning master.ServerInfo there would cycle, so ⊥ in net6/net7.
 ```
 the master `info.clients` array IS the current player list per server (name/clan/country/score/is_player) — surfaced as `ServerInfo.Clients`; same struct returned by `QueryServerInfo` so callers get one shape from either source.
 
@@ -491,6 +501,7 @@ the master `info.clients` array IS the current player list per server (name/clan
 - V56: master list over HTTPS+JSON — `master.FetchServerList` GETs a DDNet master (`/ddnet/15/servers.json`), decodes `servers`, returns `[]ServerEntry`. stdlib only (`net/http`+`encoding/json`, C1). context-bounded (honors ctx cancel/deadline). failover: try masters in order, return the first success; all-fail → error. decode TOLERANT — unknown JSON fields ignored (forward-compat); an `addresses` entry with an unparseable/unknown scheme is skipped, ⊥ failing the whole list. each `Address` carries `packet.Version` so 0.6/0.7 are distinguished. `ServerInfo.Clients` = the server's current player/spectator list.
 - V57: server info WITHOUT a play session — `master.QueryServerInfo` opens only a UDP socket and exchanges CONNLESS packets (uses the existing connless header flag), sends NO Handshake/Login/Ready, and returns parsed `ServerInfo` (incl. `Clients`). ctx-bounded with timeout. version-aware (net6 vs net7 connless info build/parse differ). result struct identical to the master-list `ServerInfo` so either source yields one shape.
 - V58: browser is read-only + side-effect-free on the game client — `master` package neither creates a `client.Client`/session nor mutates connection state; it only reads (HTTP GET, connless query). callable standalone before/without ever connecting to play.
+- V59: `master` composes net6/net7 + packer helpers — it ⊥ hand-roll protocol wire bytes (no literal header/connless/token byte construction, no raw BE token packing). connless getinfo packets come from `net6.BuildInfoRequestConnless`/`net7.BuildInfoRequestConnless`, the 0.7 token handshake from `net7.BuildTokenRequest`/`net7.ParseTokenResponse`, framing strip from `*.ConnlessInfoPayload`, and body decode from `packer` (GetString/GetInt). connless magics are shared in `packet` (one definition, ⊥ duplicated per package). protocol packet builders live with their peers in `net6/builder.go` + `net7/builder.go` (same home as `BuildConnect`/`BuildTokenRequest`/`BuildChunkPacket`) — ⊥ a separate ad-hoc builder location. consolidation invariant (cf. V19/V25): one tested framing path, reused, never re-implemented in a consumer.
 
 ## §T — tasks
 
@@ -554,12 +565,16 @@ T44|x|reader eventCh buffer configurable: WithEventChanSize(n) net6+net7 Session
 T45|x|UDP read buffer configurable: network.WithReadBufferSize(n) DialOption (network/conn.go, like WithReadTimeout) + net6/net7 Session option + Client option plumbed via newSession → network.Dial; udp.SetReadBuffer(n); default 2MB clamp (≤0→2MB); + tests (DialOption sets field, default, plumb)|V54,V55,V41,I.bufsize
 T46|x|master pkg: types (PlayerInfo/ServerInfo/Address/ServerEntry); FetchServerList(ctx)/FetchServerListFrom over DDNet masters /ddnet/15/servers.json; tolerant JSON decode; address "tw-0.6+udp://host:port" parse → {Version,Host,Port} (unknown scheme skipped); failover; WithHTTPClient/WithMasters opts; + tests (decode fixture incl clients player list, address parse, unknown-scheme skip, failover, ctx cancel)|V56,V58,I.master,C1
 T47|x|connless server info (no session): net6/net7 BuildInfoRequestConnless + ParseInfoResponseConnless (version-aware, §R refs); master.QueryServerInfo(ctx,version,addr,opts) opens UDP only, connless request→response→ServerInfo incl Clients, ctx timeout, ⊥ Handshake/Login; + tests (build/parse round-trip from captured response bytes, no-session assertion)|V57,V58,I.master,C2
+T48|x|shared connless magics + net6 helpers: packet.ServerBrowseGetInfo/ServerBrowseInfo (one def); net6/builder.go BuildInfoRequestConnless(reqToken byte) (6×0xFF framing) + net6 ConnlessInfoPayload(datagram)→(body,ok) strip+verify INFO; + tests (build bytes, strip round-trip, bad-magic rejected)|V59,I.master
+T49|.|net7 connless helpers: net7/builder.go BuildInfoRequestConnless(serverToken,clientToken packet.Token,reqToken int) (Header{Connless}.Pack+magic+PackInt) + ParseTokenResponse(datagram)→(packet.Token,ok) (reuse Handshake offsets) + ConnlessInfoPayload(datagram)→(body,ok); + tests|V59,I.master,C2
+T50|.|refactor master.QueryServerInfo onto helpers: 0.6 = net6.BuildInfoRequestConnless+ConnlessInfoPayload; 0.7 = net7.BuildTokenRequest+ParseTokenResponse+BuildInfoRequestConnless+ConnlessInfoPayload; body decode via packer stays in master (parseInfo6/7). ⊥ any literal wire bytes in master. behavior unchanged: 0.6 live-verified, unit+fake-server green (V48-style)|V59,V57,V58,I.master,C2
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
 perf effort (library client, ⊥ racebot): T34–T40 = `.` (pending). build order: T34 (bench baseline) → T35 (profile/rank) → T36 (snap O(1)) → T37 (unpacker reuse) → T38 (packer pack) → T39 (client per-tick) → T40 (re-bench/verify). T34+T35 are measure-FIRST gates — ⊥ optimize (T36–T39) before profile confirms targets (V49).
 snap storage size config: T41–T42 = `x` (done). build order: T41 (plumb option packet→session→client + clamp) → T42 (tests). additive opt-in, default unchanged (V53).
 configurable buffer sizes: T43–T45 = `.` (pending). build order: T43 (predInputRingSize) → T44 (eventCh buffer) → T45 (UDP read buffer). each = option + clamp + tests; additive opt-in, defaults unchanged (V54); wire-format constants excluded (V55).
-master server list + server info: T46–T47 = `.` (pending). build order: T46 (HTTP/JSON master list) → T47 (connless server-info query). new `master` pkg, stdlib only (V56), read-only/no-session (V58); connless info reuses header connless flag (V57).
+master server list + server info: T46–T47 = `x` (done). build order: T46 (HTTP/JSON master list) → T47 (connless server-info query). new `master` pkg, stdlib only (V56), read-only/no-session (V58); connless info reuses header connless flag (V57).
+helper alignment: T48–T50 = `.` (pending). build order: T48 (packet magics + net6 connless helpers) → T49 (net7 connless helpers) → T50 (refactor master onto helpers, ⊥ raw bytes). consolidation per V59 — net6/net7 own the framing, master only composes. behavior unchanged (V48-style).
 build order: T29 (password) → T30 (rcon API) → T31 (rcon state+reactions) → T32 (rcon tests) → T22 (research wire) → T23 (disconnect classify) → T24 (timeout code send) → T25 (reconnect-with-timeout) → T26 (auto-reconnect loop) → T27 (OnDisconnect callback) → T28 (reconnect tests).
 prior build order (completed): T19 → T14 → T21 → T13 → T12 → T10a → T15 → T16 → T20 → T17.
 

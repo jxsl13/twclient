@@ -36,6 +36,14 @@ const SequenceMask = MaxSequence - 1 // 1023
 // AntiReflectionSize is the number of null bytes sent to prevent reflection attacks.
 const AntiReflectionSize = 508
 
+// Connless server-browse magics, shared by 0.6 and 0.7 (SERVERBROWSE_GETINFO /
+// SERVERBROWSE_INFO). The connless framing around them differs per protocol
+// (net6/net7 BuildInfoRequestConnless), but the magics are identical.
+var (
+	ServerBrowseGetInfo = []byte{255, 255, 255, 255, 'g', 'i', 'e', '3'}
+	ServerBrowseInfo    = []byte{255, 255, 255, 255, 'i', 'n', 'f', '3'}
+)
+
 // TokenRequestDataSize is the fixed payload size for token/connect requests.
 const TokenRequestDataSize = 512
 
