@@ -266,3 +266,32 @@ func readVarint(r io.ByteReader) (int, error) {
 	}
 	return value ^ -sign, nil
 }
+
+// Encoder writes a teehistorian file incrementally to an io.Writer: NewEncoder
+// emits the Magic, raw header bytes and NUL terminator, then each Write appends
+// one record's wire bytes. The concatenation is byte-identical to (*File).WriteTo.
+type Encoder struct {
+	w   io.Writer
+	buf []byte // reused scratch for one record's wire bytes
+}
+
+// NewEncoder writes the file preamble (Magic + h.Raw + NUL) to w and returns an
+// Encoder ready to append body records.
+func NewEncoder(w io.Writer, h Header) (*Encoder, error) {
+	var head []byte
+	head = append(head, Magic[:]...)
+	head = append(head, h.Raw...)
+	head = append(head, 0) // NUL terminator
+	if _, err := w.Write(head); err != nil {
+		return nil, err
+	}
+	return &Encoder{w: w}, nil
+}
+
+// Write appends one record's wire bytes to the underlying writer, reusing the
+// shared writeRecord encoding so output matches the in-memory path exactly.
+func (e *Encoder) Write(rec Record) error {
+	e.buf = writeRecord(e.buf[:0], rec)
+	_, err := e.w.Write(e.buf)
+	return err
+}
