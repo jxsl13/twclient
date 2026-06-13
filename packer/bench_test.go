@@ -78,3 +78,37 @@ func BenchmarkPackMsgID(b *testing.B) {
 		_ = PackMsgID(20, true)
 	}
 }
+
+// BenchmarkAppendSysInput models the 50Hz input-send build path using the
+// Append* primitives into a single reused buffer (T38): a msg id + 3 ints +
+// payload with no per-field allocation.
+func BenchmarkAppendSysInput(b *testing.B) {
+	payload := make([]byte, 40)
+	dst := make([]byte, 0, 64)
+	b.ReportAllocs()
+	for b.Loop() {
+		d := dst[:0]
+		d = AppendMsgID(d, 16, true)
+		d = AppendInt(d, 123456)
+		d = AppendInt(d, 123457)
+		d = AppendInt(d, 40)
+		d = append(d, payload...)
+		_ = d
+	}
+}
+
+// BenchmarkPackSysInput is the pre-T38 shape (one PackInt alloc per field)
+// for comparison.
+func BenchmarkPackSysInput(b *testing.B) {
+	payload := make([]byte, 40)
+	b.ReportAllocs()
+	for b.Loop() {
+		var d []byte
+		d = append(d, PackMsgID(16, true)...)
+		d = append(d, PackInt(123456)...)
+		d = append(d, PackInt(123457)...)
+		d = append(d, PackInt(40)...)
+		d = append(d, payload...)
+		_ = d
+	}
+}

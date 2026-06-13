@@ -3,6 +3,7 @@
 package packer
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -22,10 +23,13 @@ func NewUnpacker(data []byte) *Unpacker {
 	return &Unpacker{data: buf}
 }
 
-// Reset resets the unpacker with new data.
+// Reset resets the unpacker with a private copy of data. The internal buffer is
+// reused across resets (only its contents change), so a long-lived/pooled
+// Unpacker allocates at most once it has grown to the largest payload seen.
+// The unpacker only reads, never writes back, so a copy is fully equivalent to
+// the original — it just keeps the caller free to reuse/mutate its own buffer.
 func (u *Unpacker) Reset(data []byte) {
-	u.data = make([]byte, len(data))
-	copy(u.data, data)
+	u.data = append(u.data[:0], data...)
 	u.idx = 0
 }
 
@@ -98,17 +102,39 @@ const (
 
 // GetStringSanitized unpacks a null-terminated string with the given sanitization.
 func (u *Unpacker) GetStringSanitized(flags int) (string, error) {
-	var buf []byte
-	skipping := flags&SanitizeSkipWhitespaces != 0
+	rem := u.data[u.idx:]
+	nul := bytes.IndexByte(rem, 0)
+	if nul < 0 {
+		return "", errors.New("packer: unterminated string")
+	}
+	raw := rem[:nul]
+	u.idx += nul + 1 // consume the string and its NUL terminator
 
-	for {
-		b, err := u.GetByte()
-		if err != nil {
-			return "", fmt.Errorf("packer: unterminated string: %w", err)
+	// Fast path: most strings need no sanitization. Scan once; if nothing
+	// would change, convert the slice directly (a single allocation) instead
+	// of rebuilding it byte-by-byte.
+	skipping := flags&SanitizeSkipWhitespaces != 0
+	needsWork := skipping
+	if !needsWork {
+		for _, b := range raw {
+			if b < 32 {
+				if flags&SanitizeCC != 0 {
+					needsWork = true
+					break
+				}
+				if flags&SanitizeDefault != 0 && b != '\r' && b != '\n' && b != '\t' {
+					needsWork = true
+					break
+				}
+			}
 		}
-		if b == 0 {
-			break
-		}
+	}
+	if !needsWork {
+		return string(raw), nil
+	}
+
+	buf := make([]byte, 0, len(raw))
+	for _, b := range raw {
 		if skipping {
 			if b == ' ' || b == '\t' || b == '\n' {
 				continue
@@ -141,40 +167,54 @@ func (u *Unpacker) GetMsgAndSys() (msgID int, system bool, err error) {
 
 // --- Packing functions (delegating to varint library) ---
 
-// PackInt packs an integer using teeworlds variable-length encoding.
-// Values are clamped to 32-bit range [-2147483648, 2147483647].
-func PackInt(num int) []byte {
+// AppendInt appends a teeworlds variable-length integer to dst and returns the
+// extended slice. Values are clamped to 32-bit range [-2147483648,
+// 2147483647]. Appending into a reused buffer avoids the per-field allocation
+// of PackInt on hot build paths.
+func AppendInt(dst []byte, num int) []byte {
 	if num > 0x7FFFFFFF {
 		num = 0x7FFFFFFF
 	} else if num < -0x80000000 {
 		num = -0x80000000
 	}
-	return varint.AppendVarint(nil, num)
+	return varint.AppendVarint(dst, num)
 }
 
-// PackStr packs a string as null-terminated bytes.
-func PackStr(s string) []byte {
-	b := make([]byte, len(s)+1)
-	copy(b, s)
-	return b
+// AppendStr appends a null-terminated string to dst and returns the extended slice.
+func AppendStr(dst []byte, s string) []byte {
+	dst = append(dst, s...)
+	return append(dst, 0)
 }
 
-// PackBool packs a boolean as a single packed int (0 or 1).
-func PackBool(v bool) []byte {
+// AppendBool appends a boolean as a single packed int (0 or 1) to dst.
+func AppendBool(dst []byte, v bool) []byte {
 	if v {
-		return PackInt(1)
+		return AppendInt(dst, 1)
 	}
-	return PackInt(0)
+	return AppendInt(dst, 0)
 }
 
-// PackMsgID packs a message ID with the system flag in the last bit.
-func PackMsgID(msgID int, system bool) []byte {
+// AppendMsgID appends a message ID with the system flag in the last bit to dst.
+func AppendMsgID(dst []byte, msgID int, system bool) []byte {
 	id := msgID << 1
 	if system {
 		id |= 1
 	}
-	return PackInt(id)
+	return AppendInt(dst, id)
 }
+
+// PackInt packs an integer using teeworlds variable-length encoding.
+// Values are clamped to 32-bit range [-2147483648, 2147483647].
+func PackInt(num int) []byte { return AppendInt(nil, num) }
+
+// PackStr packs a string as null-terminated bytes.
+func PackStr(s string) []byte { return AppendStr(nil, s) }
+
+// PackBool packs a boolean as a single packed int (0 or 1).
+func PackBool(v bool) []byte { return AppendBool(nil, v) }
+
+// PackMsgID packs a message ID with the system flag in the last bit.
+func PackMsgID(msgID int, system bool) []byte { return AppendMsgID(nil, msgID, system) }
 
 // UnpackInt unpacks a single integer from a byte slice (stateless helper).
 func UnpackInt(data []byte) (int, error) {

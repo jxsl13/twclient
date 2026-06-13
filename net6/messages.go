@@ -98,11 +98,13 @@ func SysEnterGame() []byte {
 
 // SysInput builds a NETMSG_INPUT system message chunk payload.
 func SysInput(ackGameTick, predTick int, inputSize int, inputData []byte) []byte {
-	var data []byte
-	data = append(data, packer.PackMsgID(MsgSysInput, true)...)
-	data = append(data, packer.PackInt(ackGameTick)...)
-	data = append(data, packer.PackInt(predTick)...)
-	data = append(data, packer.PackInt(inputSize)...)
+	// Hot 50Hz send path: append directly into one buffer (no per-field
+	// PackInt allocation). 5 bytes header varints + input payload (T38, V51).
+	data := make([]byte, 0, 5+len(inputData))
+	data = packer.AppendMsgID(data, MsgSysInput, true)
+	data = packer.AppendInt(data, ackGameTick)
+	data = packer.AppendInt(data, predTick)
+	data = packer.AppendInt(data, inputSize)
 	data = append(data, inputData...)
 	return data
 }
