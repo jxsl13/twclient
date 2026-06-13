@@ -17,7 +17,8 @@ import (
 // framing AND body decode come from net6/net7 helpers — this package never
 // touches packet bytes or fields (V59/V60); it only orchestrates the UDP
 // exchange and returns the packet.ServerInfo the parser produced.
-// DefaultQueryTimeout is the overall timeout for QueryServerInfo when
+
+// DefaultQueryTimeout is the per-call timeout for QueryServerInfo when
 // WithQueryTimeout is not given (V62).
 const DefaultQueryTimeout = 5 * time.Second
 
@@ -25,35 +26,14 @@ const (
 	maxInfoReads = 8 // stray-packet tolerance while waiting for the info reply
 )
 
-// queryConfig holds QueryServerInfo options.
-type queryConfig struct {
-	timeout time.Duration
-}
-
-// QueryOption configures QueryServerInfo.
-type QueryOption func(*queryConfig)
-
-// WithQueryTimeout sets the overall timeout for the query (default 5s).
-func WithQueryTimeout(d time.Duration) QueryOption {
-	return func(qc *queryConfig) {
-		if d > 0 {
-			qc.timeout = d
-		}
-	}
-}
-
 // QueryServerInfo asks the server at addr for its current info over the
 // connless protocol, without logging in (V57). version selects the wire format
 // (packet.Version06 / packet.Version07). It opens only a UDP socket — no
 // Handshake, Login, or session — and returns the parsed ServerInfo (incl. the
-// current Clients player list). The call is bounded by the option timeout and
-// the context.
-func QueryServerInfo(ctx context.Context, version packet.Version, addr string, opts ...QueryOption) (ServerInfo, error) {
-	qc := queryConfig{timeout: DefaultQueryTimeout}
-	for _, o := range opts {
-		o(&qc)
-	}
-	ctx, cancel := context.WithTimeout(ctx, qc.timeout)
+// current Clients player list). Bounded by the Client's query timeout
+// (WithQueryTimeout) and the context.
+func (c *Client) QueryServerInfo(ctx context.Context, version packet.Version, addr string) (ServerInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.queryTimeout)
 	defer cancel()
 
 	conn, err := network.Dial(addr)

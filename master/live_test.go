@@ -20,7 +20,7 @@ func TestLiveFetchServerList(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	entries, err := FetchServerList(ctx)
+	entries, err := New().FetchServerList(ctx)
 	if err != nil {
 		t.Skipf("no master reachable (2xx): %v", err)
 	}
@@ -54,7 +54,8 @@ func TestLiveQueryServerInfo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	entries, err := FetchServerList(ctx)
+	c := New(WithQueryTimeout(5 * time.Second))
+	entries, err := c.FetchServerList(ctx)
 	if err != nil {
 		t.Skipf("no master reachable (2xx): %v", err)
 	}
@@ -78,7 +79,7 @@ func TestLiveQueryServerInfo(t *testing.T) {
 		t.Skip("no 0.6 server in the live list")
 	}
 
-	info, err := QueryServerInfo(ctx, packet.Version06, addr, WithQueryTimeout(5*time.Second))
+	info, err := c.QueryServerInfo(ctx, packet.Version06, addr)
 	if err != nil {
 		t.Skipf("server %s did not answer connless query: %v", addr, err)
 	}

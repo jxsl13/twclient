@@ -97,7 +97,7 @@ func TestQueryServerInfo06(t *testing.T) {
 		return reply
 	})
 
-	info, err := QueryServerInfo(context.Background(), packet.Version06, addr, WithQueryTimeout(2*time.Second))
+	info, err := New(WithQueryTimeout(2*time.Second)).QueryServerInfo(context.Background(), packet.Version06, addr)
 	if err != nil {
 		t.Fatalf("query 0.6: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestQueryServerInfo07(t *testing.T) {
 		return reply
 	})
 
-	info, err := QueryServerInfo(context.Background(), packet.Version07, addr, WithQueryTimeout(2*time.Second))
+	info, err := New(WithQueryTimeout(2*time.Second)).QueryServerInfo(context.Background(), packet.Version07, addr)
 	if err != nil {
 		t.Fatalf("query 0.7: %v", err)
 	}

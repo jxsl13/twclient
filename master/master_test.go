@@ -49,7 +49,7 @@ func fixtureServer(t *testing.T, status int, body string) *httptest.Server {
 // unknown-scheme skip, and tolerant decode (unknown field, null clients).
 func TestFetchServerListFrom(t *testing.T) {
 	srv := fixtureServer(t, http.StatusOK, fixtureJSON)
-	entries, err := FetchServerListFrom(context.Background(), srv.URL)
+	entries, err := New().FetchServerListFrom(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestFetchServerListFrom(t *testing.T) {
 func TestFetchServerListFailover(t *testing.T) {
 	bad := fixtureServer(t, http.StatusInternalServerError, "boom")
 	good := fixtureServer(t, http.StatusOK, fixtureJSON)
-	entries, err := FetchServerList(context.Background(), WithMasters([]string{bad.URL, good.URL}))
+	entries, err := New(WithMasters([]string{bad.URL, good.URL})).FetchServerList(context.Background())
 	if err != nil {
 		t.Fatalf("failover should reach the good master: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestFetchServerListFailover(t *testing.T) {
 // V56: all masters failing → error.
 func TestFetchServerListAllFail(t *testing.T) {
 	bad := fixtureServer(t, http.StatusBadGateway, "no")
-	if _, err := FetchServerList(context.Background(), WithMasters([]string{bad.URL})); err == nil {
+	if _, err := New(WithMasters([]string{bad.URL})).FetchServerList(context.Background()); err == nil {
 		t.Fatal("want error when all masters fail")
 	}
 }
@@ -118,7 +118,7 @@ func TestFetchServerListContextCancel(t *testing.T) {
 	srv := fixtureServer(t, http.StatusOK, fixtureJSON)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := FetchServerListFrom(ctx, srv.URL); err == nil {
+	if _, err := New().FetchServerListFrom(ctx, srv.URL); err == nil {
 		t.Fatal("want error on cancelled context")
 	}
 }

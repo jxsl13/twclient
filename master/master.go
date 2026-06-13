@@ -90,78 +90,91 @@ type jsonClient struct {
 	IsPlayer bool   `json:"is_player"`
 }
 
-// fetchConfig holds FetchServerList options.
-type fetchConfig struct {
-	client  *http.Client
-	masters []string
+// Client fetches the master server list and queries individual servers. Build
+// it with New; all request entry points are methods on it (V64). It is safe for
+// concurrent use (the RequestPolicy may carry shared state, e.g. RoundRobin's
+// cursor or ChooseFastest's cached best master).
+type Client struct {
+	masters      []string
+	http         *http.Client
+	policy       RequestPolicy
+	queryTimeout time.Duration
 }
 
-// FetchOption configures FetchServerList / FetchServerListFrom.
-type FetchOption func(*fetchConfig)
+// Option configures a Client at construction.
+type Option func(*Client)
 
-// WithHTTPClient overrides the HTTP client (e.g. to set a custom timeout or
-// proxy). Default: a client with a 10s timeout.
-func WithHTTPClient(c *http.Client) FetchOption {
-	return func(fc *fetchConfig) {
-		if c != nil {
-			fc.client = c
-		}
-	}
-}
-
-// WithMasters overrides the master URLs tried by FetchServerList.
-func WithMasters(urls []string) FetchOption {
-	return func(fc *fetchConfig) {
+// WithMasters overrides the master URLs (default DefaultMasters).
+func WithMasters(urls []string) Option {
+	return func(c *Client) {
 		if len(urls) > 0 {
-			fc.masters = urls
+			c.masters = urls
 		}
 	}
 }
 
-func newFetchConfig(opts ...FetchOption) fetchConfig {
-	fc := fetchConfig{
-		client:  &http.Client{Timeout: DefaultHTTPTimeout},
-		masters: DefaultMasters,
+// WithHTTPClient overrides the HTTP client (default: timeout DefaultHTTPTimeout).
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.http = hc
+		}
+	}
+}
+
+// WithRequestPolicy sets how FetchServerList selects among masters (default
+// ChooseFastest, replicating DDNet — see RequestPolicy).
+func WithRequestPolicy(p RequestPolicy) Option {
+	return func(c *Client) {
+		if p != nil {
+			c.policy = p
+		}
+	}
+}
+
+// WithQueryTimeout sets the per-call timeout for QueryServerInfo (default
+// DefaultQueryTimeout).
+func WithQueryTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.queryTimeout = d
+		}
+	}
+}
+
+// New builds a Client with the given options, applying defaults for any unset.
+func New(opts ...Option) *Client {
+	c := &Client{
+		masters:      DefaultMasters,
+		http:         &http.Client{Timeout: DefaultHTTPTimeout},
+		policy:       Failover(),
+		queryTimeout: DefaultQueryTimeout,
 	}
 	for _, opt := range opts {
-		opt(&fc)
+		opt(c)
 	}
-	return fc
+	return c
 }
 
-// FetchServerList fetches the server list from the first reachable master,
-// failing over through the configured masters in order. It returns the entries
-// from the first master that responds with decodable JSON; if every master
-// fails, it returns the last error (V56).
-func FetchServerList(ctx context.Context, opts ...FetchOption) ([]ServerEntry, error) {
-	fc := newFetchConfig(opts...)
-	var lastErr error
-	for _, url := range fc.masters {
-		entries, err := fetchFrom(ctx, fc.client, url)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return entries, nil
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("master: no masters configured")
-	}
-	return nil, fmt.Errorf("master: all masters failed: %w", lastErr)
+// FetchServerList fetches the server list, letting the RequestPolicy pick which
+// master(s) to hit (default ChooseFastest). Returns the first valid list; if
+// every master fails, the last error (V56/V64).
+func (c *Client) FetchServerList(ctx context.Context) ([]ServerEntry, error) {
+	return c.policy.Fetch(ctx, c.masters, c.fetchFrom)
 }
 
-// FetchServerListFrom fetches and decodes the server list from a single URL.
-func FetchServerListFrom(ctx context.Context, url string, opts ...FetchOption) ([]ServerEntry, error) {
-	fc := newFetchConfig(opts...)
-	return fetchFrom(ctx, fc.client, url)
+// FetchServerListFrom fetches and decodes the list from a single explicit
+// master URL, bypassing the policy.
+func (c *Client) FetchServerListFrom(ctx context.Context, url string) ([]ServerEntry, error) {
+	return c.fetchFrom(ctx, url)
 }
 
-func fetchFrom(ctx context.Context, client *http.Client, url string) ([]ServerEntry, error) {
+func (c *Client) fetchFrom(ctx context.Context, url string) ([]ServerEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("master: build request %q: %w", url, err)
 	}
-	resp, err := client.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("master: get %q: %w", url, err)
 	}
