@@ -420,7 +420,7 @@ T28|x|tests: code stable across reconnect; reason classification + ban-duration 
 T29|x|server password: WithPassword option + plumb Connect→Login→SysInfo(version,pw) (net6 session.go:223 + net7 equiv); carry across reconnect; wrong-pw → WrongPassword reason; ⊥ log cleartext; test connect to pw server + wrong-pw classify|V42,V33,V34,I.password
 T30|x|rcon client API: session SendRconAuth/SendRconCmd (net6+net7); RconLogin(ctx,pw) (await EventRconAuth on); Rcon(cmd) require authed (ErrNotAuthed); RconAuthed(); WithRconPassword auto-login|V43,V44,I.rcon
 T31|x|rcon state + reactions: OnRconLine/OnRconAuth/OnRconCmd callbacks; track auth from EventRconAuth, clear on disconnect; re-auth after reconnect; ⊥ log pw cleartext|V44,V45,V46,V33,I.rcon
-T32|.|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRconLine fires, re-auth after reconnect, both protocols|V43,V44,V45,V46
+T32|x|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRconLine fires, re-auth after reconnect, both protocols|V43,V44,V45,V46
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).
 build order: T29 (password) → T30 (rcon API) → T31 (rcon state+reactions) → T32 (rcon tests) → T22 (research wire) → T23 (disconnect classify) → T24 (timeout code send) → T25 (reconnect-with-timeout) → T26 (auto-reconnect loop) → T27 (OnDisconnect callback) → T28 (reconnect tests).
