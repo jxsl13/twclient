@@ -50,6 +50,9 @@ type Core struct {
 // NewCore creates a core at pos with default tuning, jumps, and the vanilla
 // world config (weapons predicted, no DDRace tile physics).
 func NewCore(col *Collision, pos Vec2) *Core {
+	if col == nil {
+		col = NewCollision(nil) // nil collision → empty all-solid world (V70)
+	}
 	return &Core{
 		Pos:       pos,
 		Jumps:     DefaultJumps,

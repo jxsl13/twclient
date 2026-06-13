@@ -15,9 +15,13 @@ const (
 func NewCollision(m *twmap.Map) *Collision {
 	var tiles []twmap.Tile
 	var w, h int
-	if layers := m.GameLayers(); len(layers) > 0 {
-		gl := layers[0]
-		tiles, w, h = gl.Tiles, gl.Width, gl.Height
+	// A nil map yields an empty world (every query hits the solid OOB border),
+	// so callers ⊥ need a loaded map to construct collision safely (V70).
+	if m != nil {
+		if layers := m.GameLayers(); len(layers) > 0 {
+			gl := layers[0]
+			tiles, w, h = gl.Tiles, gl.Width, gl.Height
+		}
 	}
 
 	at := func(tx, ty int) uint8 {
@@ -41,6 +45,9 @@ func NewCollision(m *twmap.Map) *Collision {
 	}
 
 	// Front layer: hook-through tiles let the hook pass through solid tiles.
+	if m == nil {
+		return col // nil map → no front layer (V70)
+	}
 	for _, grp := range m.Groups {
 		for _, l := range grp.Layers {
 			if l.Kind != twmap.LayerKindFront || l.Width == 0 {

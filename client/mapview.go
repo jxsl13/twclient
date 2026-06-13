@@ -41,6 +41,9 @@ type MapView struct {
 // those bounds.
 func NewMapView(m *twmap.Map) *MapView {
 	v := &MapView{}
+	if m == nil {
+		return v // nil map → empty 0×0 view; all queries return ClassSolid (V70)
+	}
 	for _, grp := range m.Groups {
 		for _, l := range grp.Layers {
 			switch l.Kind {
