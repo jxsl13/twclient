@@ -250,13 +250,20 @@ scalars (per-tick, appended to obs):
   ACTIVE tuning vector at self tile (V29), self tune-zone index, race time, game state flags
 ```
 
-### server password (T29)
-connect to password-protected servers. wire already supports it — `SysInfo(version, password)` exists in both readers (`net6/messages.go:48`, `net7/messages.go:53`); `Login` currently hardcodes `""` (`net6/session.go:223`). plumb a password through.
+### server password + optional login params (T29)
+connect to password-protected servers + make login params optional with DDNet/TW defaults. wire already supports the password — `SysInfo(version, password)` in both readers. redesign moves skin/country/password OFF the positional `Login` signature into variadic options; only name+clan stay positional.
 ```
-register: func WithPassword(pw string) Option   // sent in NETMSG_INFO handshake; empty = unprotected
-flow: Connect→Login sends SysInfo(version, pw) (net6 & net7, protocol-unified C2). wrong/missing pw on a
-  protected server → server CTRL_CLOSE "Wrong password" → DisconnectReason{Kind:WrongPassword} (V34).
-  password held on Client, reused across every reconnect (V33). ⊥ logged in cleartext.
+Session.Login: func Login(ctx, name, clan string, opts ...packet.LoginOption) error   // net6 & net7
+type: packet.LoginConfig { Skin string; Country int; Password string }   // unset → defaults
+type: packet.LoginOption func(*LoginConfig)
+ctors: packet.WithLoginSkin(s) / WithLoginCountry(n) / WithLoginPassword(pw) ; ApplyLoginOptions(opts...)→cfg
+defaults (packet consts, applied when omitted): DefaultName "nameless tee", DefaultSkin "default", DefaultCountry -1
+register: func WithPassword(pw string) Option            // → packet.WithLoginPassword in NETMSG_INFO; empty = unprotected
+register: func WithPlayerInfo(name,clan,skin string,country int) Option   // identity; New seeds Default* when unset
+flow: Connect→Login(name,clan, WithLoginSkin(skin),WithLoginCountry(country)[,WithLoginPassword(pw)]) → SysInfo(version,pw)
+  (net6 & net7, protocol-unified C2). wrong/missing pw on a protected server → CTRL_CLOSE "Wrong password" →
+  DisconnectReason{Kind:WrongPassword} (V34). password+identity held on Client, reused across reconnect (V33).
+  ⊥ logged in cleartext.
 ```
 
 ### server capabilities (T33)
