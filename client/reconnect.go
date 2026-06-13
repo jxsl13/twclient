@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"crypto/rand"
 	"regexp"
 	"strconv"
@@ -9,6 +10,16 @@ import (
 
 	"github.com/jxsl13/twclient/packet"
 )
+
+// ReconnectWithTimeout closes the current session and reconnects, re-using the
+// client identity (name/clan/skin/country/password) and the stable timeout code
+// (V32, V33). Because Connect re-registers the same /timeout <code>, a DDNet 0.6
+// server reclaims the tee that was left in the timed-out state, so the player
+// resumes the same position/hook/race progress. On non-DDNet or 0.7 servers the
+// timeout code is not sent and the reconnect yields a fresh tee (V37).
+func (c *Client) ReconnectWithTimeout(ctx context.Context) error {
+	return c.Reconnect(ctx)
+}
 
 // timeoutCodeAlphabet is the character set for generated timeout codes.
 const timeoutCodeAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
