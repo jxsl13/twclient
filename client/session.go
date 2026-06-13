@@ -71,6 +71,13 @@ type Session interface {
 	// SendKill sends the /kill command.
 	SendKill() error
 
+	// SendRconAuth sends a remote-console authentication request (NETMSG_RCON_AUTH).
+	SendRconAuth(password string) error
+
+	// SendRconCmd sends a remote-console command (NETMSG_RCON_CMD); requires
+	// a prior successful auth.
+	SendRconCmd(cmd string) error
+
 	// SendEmoticon shows an emoticon above the player.
 	SendEmoticon(e packet.Emoticon) error
 

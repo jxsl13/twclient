@@ -10,16 +10,18 @@ import (
 
 // stubSession records the action-relevant sends and no-ops everything else.
 type stubSession struct {
-	lastCall string
-	chatTeam bool
-	whisperT int
-	emoticon packet.Emoticon
-	team     int
-	spectate int
-	vote     bool
-	callVote [3]string
-	chatMsg  string
-	closes   int
+	lastCall   string
+	chatTeam   bool
+	whisperT   int
+	emoticon   packet.Emoticon
+	team       int
+	spectate   int
+	vote       bool
+	callVote   [3]string
+	chatMsg    string
+	closes     int
+	rconAuthPw string
+	rconCmd    string
 }
 
 func (s *stubSession) Login(context.Context, string, string, ...packet.LoginOption) error {
@@ -49,6 +51,14 @@ func (s *stubSession) SendWhisper(toID int, _ string) error {
 	return nil
 }
 func (s *stubSession) SendKill() error { s.lastCall = "kill"; return nil }
+func (s *stubSession) SendRconAuth(pw string) error {
+	s.lastCall, s.rconAuthPw = "rconAuth", pw
+	return nil
+}
+func (s *stubSession) SendRconCmd(cmd string) error {
+	s.lastCall, s.rconCmd = "rconCmd", cmd
+	return nil
+}
 func (s *stubSession) SendEmoticon(e packet.Emoticon) error {
 	s.lastCall, s.emoticon = "emoticon", e
 	return nil

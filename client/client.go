@@ -51,17 +51,19 @@ const inputMinInterval = 100 * time.Millisecond
 type Client struct {
 	sess Session
 
-	address     string
-	name        string
-	clan        string
-	skin        string
-	country     int
-	password    string                    // server password, sent in handshake (V42); empty = unprotected
-	timeoutCode string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
-	caps        packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
-	version     packet.Version
-	mapCache    *packet.MapCache
-	log         *slog.Logger
+	address      string
+	name         string
+	clan         string
+	skin         string
+	country      int
+	password     string                    // server password, sent in handshake (V42); empty = unprotected
+	timeoutCode  string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
+	rconPassword string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
+	rconAuthed   bool                      // current rcon auth state (V44), protected by mu
+	caps         packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
+	version      packet.Version
+	mapCache     *packet.MapCache
+	log          *slog.Logger
 
 	// snap state — protected by mu
 	mu   sync.RWMutex
@@ -344,6 +346,10 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	// (V32, V37). No-op on non-DDNet servers / 0.7.
 	c.sendTimeoutCode()
 
+	// Auto rcon-login when a password is configured, so rcon survives reconnects
+	// (T31). Auth state is updated when the server replies (EventRconAuth).
+	c.autoRconLogin()
+
 	return nil
 }
 
@@ -616,6 +622,10 @@ func (c *Client) handleEvent(ev packet.Event) {
 	case packet.EventServerCapabilities:
 		c.mu.Lock()
 		c.caps = e.Caps
+		c.mu.Unlock()
+	case packet.EventRconAuth:
+		c.mu.Lock()
+		c.rconAuthed = e.Authed
 		c.mu.Unlock()
 	case packet.EventClose:
 		reason := NewDisconnectReason(e.Reason)

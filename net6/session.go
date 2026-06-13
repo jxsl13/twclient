@@ -723,6 +723,16 @@ func (s *Session) SendKill() error {
 	return s.SendVitalMsg(GameClKill())
 }
 
+// SendRconAuth sends a remote-console authentication request.
+func (s *Session) SendRconAuth(password string) error {
+	return s.SendVitalMsg(SysRconAuth(password))
+}
+
+// SendRconCmd sends a remote-console command (requires prior auth).
+func (s *Session) SendRconCmd(cmd string) error {
+	return s.SendVitalMsg(SysRconCmd(cmd))
+}
+
 // SendEmoticon shows an emoticon.
 func (s *Session) SendEmoticon(e packet.Emoticon) error {
 	return s.SendVitalMsg(GameClEmoticon(e))
