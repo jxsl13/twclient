@@ -9,17 +9,17 @@ import (
 
 // fakeBackoff counts Next calls and returns a tiny fixed delay.
 type fakeBackoff struct {
-	nexts   atomic.Int32
-	resets  atomic.Int32
-	delayMs time.Duration
+	nexts  atomic.Int32
+	resets atomic.Int32
+	delay  time.Duration
 }
 
 func (f *fakeBackoff) Next() time.Duration {
 	f.nexts.Add(1)
-	if f.delayMs == 0 {
+	if f.delay == 0 {
 		return time.Millisecond
 	}
-	return f.delayMs
+	return f.delay
 }
 func (f *fakeBackoff) Reset() { f.resets.Add(1) }
 
@@ -48,7 +48,7 @@ func TestReconnectLoopMaxAttempts(t *testing.T) {
 
 // V39: a cancelled context aborts the loop promptly during the backoff wait.
 func TestReconnectLoopCtxAbort(t *testing.T) {
-	fb := &fakeBackoff{delayMs: time.Hour} // would block forever without ctx abort
+	fb := &fakeBackoff{delay: time.Hour} // would block forever without ctx abort
 	c := New("localhost")
 	pol := NewReconnectPolicy(WithBackoff(fb))
 
@@ -66,7 +66,7 @@ func TestReconnectLoopCtxAbort(t *testing.T) {
 
 // V40: Close aborts the loop (and a deliberate close is not auto-reconnected).
 func TestReconnectLoopCloseAbort(t *testing.T) {
-	fb := &fakeBackoff{delayMs: time.Hour}
+	fb := &fakeBackoff{delay: time.Hour}
 	c := New("localhost")
 	pol := NewReconnectPolicy(WithBackoff(fb))
 

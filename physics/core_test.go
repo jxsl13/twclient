@@ -16,12 +16,6 @@ func floorCol(floorTY int) *Collision {
 	return &Collision{Solid: func(tx, ty int) bool { return ty >= floorTY }}
 }
 
-// rightWallCol returns open space with a solid wall at and beyond tile
-// column wallTX.
-func rightWallCol(wallTX int) *Collision {
-	return &Collision{Solid: func(tx, ty int) bool { return tx >= wallTX }}
-}
-
 func approx(t *testing.T, name string, got, want, tol float32) {
 	t.Helper()
 	if d := float32(math.Abs(float64(got - want))); d > tol {
