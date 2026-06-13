@@ -151,7 +151,9 @@ func New(opts ...Option) *Client {
 		queryTimeout: DefaultQueryTimeout,
 	}
 	for _, opt := range opts {
-		opt(c)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(c)
+		}
 	}
 	return c
 }

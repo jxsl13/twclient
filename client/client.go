@@ -297,7 +297,9 @@ func New(address string, opts ...Option) *Client {
 		closed:          make(chan struct{}),
 	}
 	for _, opt := range opts {
-		opt(c)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(c)
+		}
 	}
 	// A stable timeout code is required for tee reclaim; generate one when the
 	// caller did not provide it (V32).

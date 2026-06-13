@@ -88,7 +88,9 @@ func DefaultReconnectPolicy() ReconnectPolicy {
 func NewReconnectPolicy(opts ...ReconnectOption) ReconnectPolicy {
 	p := DefaultReconnectPolicy()
 	for _, opt := range opts {
-		opt(&p)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(&p)
+		}
 	}
 	if p.backoff == nil {
 		p.backoff = DefaultBackoff()

@@ -49,7 +49,9 @@ func WithLoginPassword(password string) LoginOption {
 func ApplyLoginOptions(opts ...LoginOption) LoginConfig {
 	cfg := LoginConfig{Skin: DefaultSkin, Country: DefaultCountry}
 	for _, opt := range opts {
-		opt(&cfg)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(&cfg)
+		}
 	}
 	return cfg
 }

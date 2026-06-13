@@ -87,7 +87,9 @@ type Session struct {
 func NewSession(address string, opts ...Option) (*Session, error) {
 	tmp := &Session{log: slog.New(slog.DiscardHandler)}
 	for _, opt := range opts {
-		opt(tmp)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(tmp)
+		}
 	}
 	conn, err := network.Dial(address,
 		network.WithLogger(tmp.log),
@@ -103,7 +105,9 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 		mapCache:    packet.NewMapCache(),
 	}
 	for _, opt := range opts {
-		opt(s)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(s)
+		}
 	}
 	return s, nil
 }

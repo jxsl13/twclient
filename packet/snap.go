@@ -115,7 +115,9 @@ func NewSnapStorage(itemSizeFn func(typeID int) int, opts ...SnapStorageOption) 
 		ItemSizeFn: itemSizeFn,
 	}
 	for _, opt := range opts {
-		opt(ss)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(ss)
+		}
 	}
 	return ss
 }

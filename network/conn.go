@@ -88,7 +88,9 @@ func Dial(address string, opts ...DialOption) (*Conn, error) {
 		log:            slog.New(slog.DiscardHandler),
 	}
 	for _, opt := range opts {
-		opt(c)
+		if opt != nil { // a nil option is ignored (V70)
+			opt(c)
+		}
 	}
 	// Enlarge the receive buffer to absorb burst snapshot delivery; the OS
 	// default (786KB) can overflow when many bots share scheduling time (V54).
