@@ -88,6 +88,12 @@ func (v *MapView) Unhook(tx, ty int) bool { return v.gameID(tx, ty) == twmap.Til
 // Death reports whether the tile kills on contact.
 func (v *MapView) Death(tx, ty int) bool { return v.gameID(tx, ty) == twmap.TileDeath }
 
+// Finish reports whether the tile is a race finish tile.
+func (v *MapView) Finish(tx, ty int) bool { return v.gameID(tx, ty) == twmap.TileFinish }
+
+// Start reports whether the tile is a race start tile.
+func (v *MapView) Start(tx, ty int) bool { return v.gameID(tx, ty) == twmap.TileStart }
+
 // Freeze reports whether the tile freezes the tee (freeze or deep-freeze).
 func (v *MapView) Freeze(tx, ty int) bool {
 	id := v.gameID(tx, ty)
