@@ -348,6 +348,18 @@ packer PackInt/PackStr/PackMsgID|fresh []byte per field on build|append into a r
 packer GetStringSanitized:104 var buf []byte|grow-by-append, realloc churn|preallocate by RemainingSize(); single []byte→string at end
 client/snap.go derive* (:283-285,charactersCopy:190)|intermediate []Event per sub-diff + map copy per tick|append into one evs (cap=prev len); reuse prev-map by swap not realloc
 ```
+measured (T35, profiled @ 64-char snap — baselines, see commit T34):
+```
+path|ns/op|B/op|allocs/op|profile finding|task
+packet applyDelta|17.3µs|17099|72|38.8% CPU cum (self+GetInt+Varint); 99.7% of pkg allocs. 64× absFields make([]int) (RETAINED) + O(n²) updated-item scan|T36
+packet ProcessSnap|18.0µs|17099|72|= applyDelta + map retention|T36
+packer NewUnpacker|83ns|256|1|per inbound msg make+copy; ×(msgs/tick). pooled Reset variant already 0-alloc|T37
+packer PackInt/PackMsgID|26/28ns|8|1|per packed field on SEND path|T38
+client deriveEvents|13.1µs|7024|136|59% pkg allocs; mostly packet.Event interface boxing (INHERENT, V48) + 3 sub-slice + per-tick maps|T39 (bounded)
+client charactersCopy|6.9µs|13608|67|fresh map per observation build|T39 (bounded)
+physics Core.Tick|217ns|0|0|0-alloc, CPU-only; NOT an opt target (V49)|—
+```
+chosen targets (V49): T36 (applyDelta O(1) index + single absFields backing array) = top ROI; T37 (pool Unpacker on snap path); T38 (Append* on send path); T39 (slice-cap + per-tick map reuse, bounded — event boxing inherent). physics excluded (no alloc, not flagged).
 DDNet/TW perf refs: snapshot item hashtable for O(1) item lookup (`snapshot.cpp` `CSnapshot::GetItemIndex`); fixed MAX_SNAPSHOT_SIZE preallocated buffers, ⊥ per-tick heap; varint packed into caller-owned buffers (`AppendVarint`). Go: `sync.Pool` for transient scratch (already in `deltaScratch`), preallocate slice cap, avoid `[]byte`↔`string` copies, escape-analysis (`go build -gcflags=-m`) to keep hot locals on stack.
 
 ## §V — invariants
@@ -457,7 +469,7 @@ T30|x|rcon client API: session SendRconAuth/SendRconCmd (net6+net7); RconLogin(c
 T31|x|rcon state + reactions: OnRconLine/OnRconAuth/OnRconCmd callbacks; track auth from EventRconAuth, clear on disconnect; re-auth after reconnect; ⊥ log pw cleartext|V44,V45,V46,V33,I.rcon
 T32|x|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRconLine fires, re-auth after reconnect, both protocols|V43,V44,V45,V46
 T34|x|bench harness (-benchmem, no new deps): BenchmarkApplyDelta/ProcessSnap (packet), UnpackInt/GetString/Pack* (packer), ProcessMessage (net6/7), PredictTick/BuildTickState/DeriveEvents (client); record baseline ns/op + allocs/op|V49,I.perf
-T35|.|profile: cpuprofile+memprofile per pkg → rank top CPU fns + alloc sites; record measured top-N in §PERF; pick optimization targets (⊥ unmeasured)|V48,V49,I.perf
+T35|x|profile: cpuprofile+memprofile per pkg → rank top CPU fns + alloc sites; record measured top-N in §PERF; pick optimization targets (⊥ unmeasured)|V48,V49,I.perf
 T36|.|applyDelta O(1) item index: replace linear updated-item scan (snap.go:231) with itemKey→idx map; parity test vs old result; bench delta|V50,V48,V49
 T37|.|Unpacker reuse: pool/Reset across the 73 NewUnpacker sites (net6/net7 readers) — one buffer per session reader, ⊥ alloc+copy per inbound msg; verify no cross-msg aliasing|V51,V52,V48
 T38|.|packer pack path: AppendInt/AppendStr/AppendMsgID into a reused builder buffer (keep PackInt etc as thin wrappers); GetStringSanitized preallocate buf by RemainingSize|V51,V48
