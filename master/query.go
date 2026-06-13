@@ -4,26 +4,20 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/jxsl13/twclient/net6"
 	"github.com/jxsl13/twclient/net7"
 	"github.com/jxsl13/twclient/network"
-	"github.com/jxsl13/twclient/packer"
 	"github.com/jxsl13/twclient/packet"
 )
 
 // Connless server-info query: ask a single server for its info over the
-// connless protocol, without opening a play session (V57/V58). All wire framing
-// comes from net6/net7 helpers — this package never hand-rolls packet bytes
-// (V59); only the info body is decoded here (decimal-string ints for 0.6,
-// varints for 0.7), since returning master.ServerInfo from net6/net7 would
-// create an import cycle.
+// connless protocol, without opening a play session (V57/V58). Both wire
+// framing AND body decode come from net6/net7 helpers — this package never
+// touches packet bytes or fields (V59/V60); it only orchestrates the UDP
+// exchange and returns the packet.ServerInfo the parser produced.
 const (
-	serverInfoFlagPassword = 1 // SERVER_FLAG_PASSWORD / SERVERINFO_FLAG_PASSWORD
-
 	maxInfoReads = 8 // stray-packet tolerance while waiting for the info reply
 )
 
@@ -87,65 +81,10 @@ func query6(ctx context.Context, conn *network.Conn) (ServerInfo, error) {
 			return ServerInfo{}, fmt.Errorf("master: 0.6 recv info: %w", err)
 		}
 		if body, ok := net6.ConnlessInfoPayload(data); ok {
-			return parseInfo6(body)
+			return net6.ParseInfoResponse(body)
 		}
 	}
 	return ServerInfo{}, fmt.Errorf("master: 0.6 no info response")
-}
-
-// parseInfo6 decodes the 0.6 inf3 body: NUL-terminated strings throughout, with
-// numbers encoded as decimal strings (DDNet ADD_INT).
-func parseInfo6(b []byte) (ServerInfo, error) {
-	u := packer.NewUnpacker(b)
-	// token, version (skipped)
-	if _, err := u.GetString(); err != nil {
-		return ServerInfo{}, fmt.Errorf("master: 0.6 token: %w", err)
-	}
-	if _, err := u.GetString(); err != nil {
-		return ServerInfo{}, fmt.Errorf("master: 0.6 version: %w", err)
-	}
-	name, err := u.GetString()
-	if err != nil {
-		return ServerInfo{}, fmt.Errorf("master: 0.6 name: %w", err)
-	}
-	mapName, _ := u.GetString()
-	gameType, _ := u.GetString()
-	flags := decInt6(u)
-	info := ServerInfo{
-		Name:       name,
-		GameType:   gameType,
-		MapName:    mapName,
-		Passworded: flags&serverInfoFlagPassword != 0,
-		NumPlayers: decInt6(u),
-		MaxPlayers: decInt6(u),
-		NumClients: decInt6(u),
-		MaxClients: decInt6(u),
-	}
-	for {
-		cname, err := u.GetString()
-		if err != nil {
-			break // end of client list
-		}
-		cclan, _ := u.GetString()
-		info.Clients = append(info.Clients, PlayerInfo{
-			Name:     cname,
-			Clan:     cclan,
-			Country:  decInt6(u),
-			Score:    decInt6(u),
-			IsPlayer: decInt6(u) != 0, // 0.6: 1 = player
-		})
-	}
-	return info, nil
-}
-
-// decInt6 reads one decimal-string integer from the 0.6 body (0 on error/EOF).
-func decInt6(u *packer.Unpacker) int {
-	s, err := u.GetString()
-	if err != nil {
-		return 0
-	}
-	n, _ := strconv.Atoi(strings.TrimSpace(s))
-	return n
 }
 
 // --- 0.7 ---
@@ -174,7 +113,7 @@ func query7(ctx context.Context, conn *network.Conn) (ServerInfo, error) {
 			return ServerInfo{}, fmt.Errorf("master: 0.7 recv info: %w", err)
 		}
 		if body, ok := net7.ConnlessInfoPayload(data); ok {
-			return parseInfo7(body)
+			return net7.ParseInfoResponse(body)
 		}
 	}
 	return ServerInfo{}, fmt.Errorf("master: 0.7 no info response")
@@ -193,62 +132,4 @@ func recvServerToken7(ctx context.Context, conn *network.Conn) (packet.Token, er
 		}
 	}
 	return packet.Token{}, fmt.Errorf("master: 0.7 no token reply")
-}
-
-// parseInfo7 decodes the 0.7 inf3 body: strings are NUL-terminated, numbers are
-// varints (teeworlds GenerateServerInfo). 0.7 carries hostname + skill_level
-// fields absent in 0.6, and a per-client flag where 0 = player.
-func parseInfo7(b []byte) (ServerInfo, error) {
-	u := packer.NewUnpacker(b)
-	if _, err := u.GetInt(); err != nil { // request token echo
-		return ServerInfo{}, fmt.Errorf("master: 0.7 token: %w", err)
-	}
-	if _, err := u.GetString(); err != nil { // version
-		return ServerInfo{}, fmt.Errorf("master: 0.7 version: %w", err)
-	}
-	name, err := u.GetString()
-	if err != nil {
-		return ServerInfo{}, fmt.Errorf("master: 0.7 name: %w", err)
-	}
-	if _, err := u.GetString(); err != nil { // hostname
-		return ServerInfo{}, fmt.Errorf("master: 0.7 hostname: %w", err)
-	}
-	mapName, _ := u.GetString()
-	gameType, _ := u.GetString()
-	flags, _ := u.GetInt()
-	if _, err := u.GetInt(); err != nil { // skill level
-		return ServerInfo{}, fmt.Errorf("master: 0.7 skill: %w", err)
-	}
-	numPlayers, _ := u.GetInt()
-	maxPlayers, _ := u.GetInt()
-	numClients, _ := u.GetInt()
-	maxClients, _ := u.GetInt()
-	info := ServerInfo{
-		Name:       name,
-		GameType:   gameType,
-		MapName:    mapName,
-		Passworded: flags&serverInfoFlagPassword != 0,
-		NumPlayers: numPlayers,
-		MaxPlayers: maxPlayers,
-		NumClients: numClients,
-		MaxClients: maxClients,
-	}
-	for {
-		cname, err := u.GetString()
-		if err != nil {
-			break
-		}
-		cclan, _ := u.GetString()
-		country, _ := u.GetInt()
-		score, _ := u.GetInt()
-		pflag, _ := u.GetInt()
-		info.Clients = append(info.Clients, PlayerInfo{
-			Name:     cname,
-			Clan:     cclan,
-			Country:  country,
-			Score:    score,
-			IsPlayer: pflag == 0, // 0.7: 0 = player, 1 = spectator
-		})
-	}
-	return info, nil
 }

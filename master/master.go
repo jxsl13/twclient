@@ -26,29 +26,13 @@ var DefaultMasters = []string{
 	"https://master4.ddnet.org/ddnet/15/servers.json",
 }
 
-// PlayerInfo is one current client (player or spectator) on a server.
-type PlayerInfo struct {
-	Name     string
-	Clan     string
-	Country  int
-	Score    int
-	IsPlayer bool
-}
-
-// ServerInfo is a server's advertised state. The same struct is returned by
-// FetchServerList (from the master JSON) and QueryServerInfo (connless), so
-// callers handle one shape regardless of source.
-type ServerInfo struct {
-	Name       string
-	GameType   string
-	MapName    string
-	Passworded bool
-	NumPlayers int // clients with IsPlayer
-	NumClients int // all clients (players + spectators)
-	MaxPlayers int
-	MaxClients int
-	Clients    []PlayerInfo // current player/spectator list
-}
+// PlayerInfo and ServerInfo are the version-agnostic result types, defined in
+// packet (V60) so net6/net7 parsers can return them without an import cycle.
+// Aliased here for ergonomic master.ServerInfo/master.PlayerInfo use.
+type (
+	PlayerInfo = packet.PlayerInfo
+	ServerInfo = packet.ServerInfo
+)
 
 // Address is one connectable endpoint of a server, with its protocol version.
 type Address struct {

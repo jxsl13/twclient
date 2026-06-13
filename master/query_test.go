@@ -57,45 +57,9 @@ func build07Body() []byte {
 	return b
 }
 
-// V57: 0.6 body parses; player list + counts + password flag correct.
-func TestParseInfo6(t *testing.T) {
-	info, err := parseInfo6(build06Body())
-	if err != nil {
-		t.Fatalf("parseInfo6: %v", err)
-	}
-	if info.Name != "My Server" || info.MapName != "dm1" || info.GameType != "DM" {
-		t.Errorf("basics wrong: %+v", info)
-	}
-	if !info.Passworded {
-		t.Error("passworded should be true (flags=1)")
-	}
-	if info.NumPlayers != 2 || info.MaxPlayers != 16 || info.NumClients != 3 || info.MaxClients != 16 {
-		t.Errorf("counts wrong: %+v", info)
-	}
-	if len(info.Clients) != 1 || info.Clients[0].Name != "alice" || info.Clients[0].Country != -1 || !info.Clients[0].IsPlayer {
-		t.Errorf("client wrong: %+v", info.Clients)
-	}
-}
-
-// V57: 0.7 body parses; hostname/skill fields consumed, spectator flag → IsPlayer false.
-func TestParseInfo7(t *testing.T) {
-	info, err := parseInfo7(build07Body())
-	if err != nil {
-		t.Fatalf("parseInfo7: %v", err)
-	}
-	if info.Name != "Seven Srv" || info.MapName != "ctf1" || info.GameType != "CTF" {
-		t.Errorf("basics wrong: %+v", info)
-	}
-	if info.Passworded {
-		t.Error("passworded should be false")
-	}
-	if info.NumPlayers != 1 || info.MaxPlayers != 8 || info.NumClients != 2 || info.MaxClients != 8 {
-		t.Errorf("counts wrong: %+v", info)
-	}
-	if len(info.Clients) != 1 || info.Clients[0].Name != "bob" || info.Clients[0].Country != 49 || info.Clients[0].IsPlayer {
-		t.Errorf("client wrong (spectator expected): %+v", info.Clients)
-	}
-}
+// Body decode moved to net6/net7 ParseInfoResponse (V60) — tested there. The
+// fake-server round-trip tests below exercise the full QueryServerInfo path,
+// including those parsers.
 
 // fakeUDPServer runs handler for each received datagram until the test ends.
 // handler returns the bytes to reply (nil = no reply).
