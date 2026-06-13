@@ -47,6 +47,12 @@ func WithSnapStorageSize(n int) Option {
 	return func(s *Session) { s.snapStorageSize = n }
 }
 
+// WithEventChanSize sets the buffered capacity of the reader's event channel
+// (V54). Zero or unset keeps the default (128); a positive value is used as-is.
+func WithEventChanSize(n int) Option {
+	return func(s *Session) { s.eventChanSize = n }
+}
+
 // Session tracks the connection state for a 0.7 client session.
 type Session struct {
 	conn        *network.Conn
@@ -65,6 +71,7 @@ type Session struct {
 	reader        reader           // background reader state (activated by StartReader)
 
 	snapStorageSize int // configured packet.SnapStorage window; 0 = default (V53)
+	eventChanSize   int // configured reader event-channel buffer; 0 = default (V54)
 }
 
 // NewSession creates a new 0.7 session against the given address.

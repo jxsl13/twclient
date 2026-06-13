@@ -65,6 +65,7 @@ type Client struct {
 	mapCache         *packet.MapCache
 	snapStorageSize  int // packet.SnapStorage window for the session reader; 0 = default (V53)
 	predInputRingLen int // prediction input ring size; 0 = default (V54)
+	eventChanSize    int // session reader event-channel buffer; 0 = default (V54)
 	log              *slog.Logger
 
 	// snap state — protected by mu
@@ -202,6 +203,13 @@ func WithSnapStorageSize(n int) Option {
 // covered. Only relevant when prediction is enabled.
 func WithPredInputRingSize(n int) Option {
 	return func(c *Client) { c.predInputRingLen = n }
+}
+
+// WithEventChanSize sets the buffered capacity of the session reader's event
+// channel (V54). The default (128) is kept when unset or zero. A larger buffer
+// absorbs bigger event bursts before the event loop drains them.
+func WithEventChanSize(n int) Option {
+	return func(c *Client) { c.eventChanSize = n }
 }
 
 // WithPrediction enables DDNet-style client-side prediction of the local
@@ -692,11 +700,13 @@ func (c *Client) newSession() (Session, error) {
 			net6.WithLogger(c.log),
 			net6.WithMapCache(c.mapCache),
 			net6.WithSnapStorageSize(c.snapStorageSize),
+			net6.WithEventChanSize(c.eventChanSize),
 		)
 	case packet.Version07:
 		return net7.NewSession(c.address,
 			net7.WithLogger(c.log),
 			net7.WithSnapStorageSize(c.snapStorageSize),
+			net7.WithEventChanSize(c.eventChanSize),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", c.version)

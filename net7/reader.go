@@ -14,6 +14,18 @@ import (
 // so it can periodically check the stop signal.
 const readerTimeout = 50 * time.Millisecond
 
+// defaultEventChanSize is the reader event-channel buffer used when none is
+// configured (V54).
+const defaultEventChanSize = 128
+
+// eventChanSizeOrDefault returns n if positive, else the default (V54).
+func eventChanSizeOrDefault(n int) int {
+	if n <= 0 {
+		return defaultEventChanSize
+	}
+	return n
+}
+
 // reader holds the background reader state for a Session.
 // It is embedded in Session and activated by StartReader().
 type reader struct {
@@ -38,7 +50,7 @@ type reader struct {
 // reader goroutine. Calling Close also stops the reader.
 func (s *Session) StartReader(ctx context.Context) {
 	s.reader.ctx, s.reader.cancel = context.WithCancel(ctx)
-	s.reader.eventCh = make(chan packet.Event, 128)
+	s.reader.eventCh = make(chan packet.Event, eventChanSizeOrDefault(s.eventChanSize))
 	s.reader.snaps = packet.NewSnapStorage(nil, packet.WithMaxSnaps(s.snapStorageSize))
 	s.reader.lastRecv.Store(time.Now().UnixNano())
 

@@ -39,3 +39,34 @@ func TestWithSnapStorageSize(t *testing.T) {
 		})
 	}
 }
+
+// V54: WithEventChanSize sets the reader event-channel buffer; unset keeps the
+// default (128), <=0 falls back to default. Protocol-unified with net7.
+func TestWithEventChanSize(t *testing.T) {
+	cases := []struct {
+		name string
+		opts []Option
+		want int
+	}{
+		{"default", nil, defaultEventChanSize},
+		{"set", []Option{WithEventChanSize(512)}, 512},
+		{"zero-default", []Option{WithEventChanSize(0)}, defaultEventChanSize},
+		{"neg-default", []Option{WithEventChanSize(-1)}, defaultEventChanSize},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, err := NewSession("127.0.0.1:34999", c.opts...)
+			if err != nil {
+				t.Fatalf("NewSession: %v", err)
+			}
+			defer s.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			s.StartReader(ctx)
+			defer s.StopReader()
+			if got := cap(s.reader.eventCh); got != c.want {
+				t.Errorf("cap(eventCh) = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
