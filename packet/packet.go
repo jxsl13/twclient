@@ -5,6 +5,7 @@ package packet
 
 import (
 	"crypto/rand"
+	"time"
 )
 
 // Token represents a 4-byte security token.
@@ -45,6 +46,12 @@ var (
 	ServerBrowseGetInfo = []byte{255, 255, 255, 255, 'g', 'i', 'e', '3'}
 	ServerBrowseInfo    = []byte{255, 255, 255, 255, 'i', 'n', 'f', '3'}
 )
+
+// LoginResendInterval is how long the 0.6/0.7 handshake/login waits for the
+// expected reply before retransmitting the pending step (CONNECT/token/INFO/
+// READY) via network.Conn.RecvResending. Mirrors DDNet CNetConnection::Update's
+// resend timer (V68, V74).
+const LoginResendInterval = 500 * time.Millisecond
 
 // TokenRequestDataSize is the fixed payload size for token/connect requests.
 const TokenRequestDataSize = 512

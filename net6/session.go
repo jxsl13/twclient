@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -198,7 +197,7 @@ func (s *Session) Handshake(ctx context.Context) error {
 	}
 
 	// Receive connect accept, resending CONNECT on loss (V68, B6).
-	resp, err := s.resendRecv(ctx, sendConnect)
+	resp, err := s.conn.RecvResending(ctx, packet.LoginResendInterval, sendConnect)
 	if err != nil {
 		return fmt.Errorf("session06: recv connect accept: %w", err)
 	}
@@ -425,41 +424,6 @@ func (s *Session) recvAndParsePayload(ctx context.Context) (Header, []byte, erro
 	return s.parsePayload(resp)
 }
 
-// loginResendInterval is how long Handshake/Login wait for the expected reply
-// before retransmitting the pending step (CONNECT / INFO / READY). Mirrors
-// DDNet CNetConnection::Update's resend timer; bounded by the overall connect
-// ctx deadline (V68, B6).
-const loginResendInterval = 500 * time.Millisecond
-
-// resendRecv waits up to one loginResendInterval for a packet. On interval
-// timeout it retransmits the pending step (resend) and retries, bounded by ctx.
-// Returns the raw packet, or ctx.Err() once the overall connect deadline
-// elapses; a non-timeout I/O error is returned as-is. This makes Login survive
-// packet loss instead of aborting on the first read timeout (V68, B6).
-func (s *Session) resendRecv(ctx context.Context, resend func() error) ([]byte, error) {
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		rctx, cancel := context.WithTimeout(ctx, loginResendInterval)
-		resp, err := s.conn.RecvContext(rctx)
-		cancel()
-		if err == nil {
-			return resp, nil
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err() // overall deadline / cancel → give up
-		}
-		if errors.Is(err, context.DeadlineExceeded) || packet.IsTimeout(err) {
-			if rerr := resend(); rerr != nil { // resend interval elapsed → retransmit
-				return nil, rerr
-			}
-			continue
-		}
-		return nil, err // genuine I/O error
-	}
-}
-
 // recvAndParsePayloadTimeout is like recvAndParsePayload but uses the given timeout.
 func (s *Session) recvAndParsePayloadTimeout(ctx context.Context, timeout time.Duration) (Header, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -513,7 +477,7 @@ func (s *Session) RecvUntilMapChange(ctx context.Context) error {
 // (resend, the INFO chunk) on packet loss until the connect ctx deadline (V68).
 func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) error {
 	for {
-		resp, err := s.resendRecv(ctx, resend)
+		resp, err := s.conn.RecvResending(ctx, packet.LoginResendInterval, resend)
 		if err != nil {
 			return fmt.Errorf("session06: recv waiting for map_change: %w", err)
 		}
@@ -544,7 +508,7 @@ func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) e
 // (resend, the READY chunk) on packet loss until the connect ctx deadline (V68).
 func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) error {
 	for {
-		resp, err := s.resendRecv(ctx, resend)
+		resp, err := s.conn.RecvResending(ctx, packet.LoginResendInterval, resend)
 		if err != nil {
 			return fmt.Errorf("session06: recv waiting for con_ready: %w", err)
 		}

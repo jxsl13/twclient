@@ -3,6 +3,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -149,4 +150,39 @@ func (c *Conn) RecvContext(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	return buf[:n], nil
+}
+
+// RecvResending receives one packet, retransmitting a pending step on loss: it
+// waits up to resendInterval for a packet, and each time that interval elapses
+// with no packet it calls resend and waits again — NOT a timeout (the wait does
+// not abort; only ctx bounds the overall operation). Returns the packet,
+// ctx.Err() once the overall deadline/cancel fires, or a non-timeout I/O error
+// as-is.
+//
+// It is a version-agnostic transport primitive (the resend closure +
+// resendInterval are caller-supplied) used by the 0.6/0.7 login handshakes so a
+// single dropped CONNECT/INFO/READY does not fail the connect (mirrors DDNet
+// CNetConnection::Update). It carries no protocol knowledge.
+func (c *Conn) RecvResending(ctx context.Context, resendInterval time.Duration, resend func() error) ([]byte, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		rctx, cancel := context.WithTimeout(ctx, resendInterval)
+		resp, err := c.RecvContext(rctx)
+		cancel()
+		if err == nil {
+			return resp, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err() // overall deadline / cancel → give up
+		}
+		if errors.Is(err, context.DeadlineExceeded) || packet.IsTimeout(err) {
+			if rerr := resend(); rerr != nil { // interval elapsed → retransmit
+				return nil, rerr
+			}
+			continue
+		}
+		return nil, err // genuine I/O error
+	}
 }
