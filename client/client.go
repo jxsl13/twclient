@@ -97,6 +97,9 @@ type Client struct {
 
 	// cached map view (built lazily once the map is available)
 	mapView *MapView
+
+	// events accumulated since the last TickState was built (drained per tick)
+	tickEvents []packet.Event
 }
 
 // MapView returns a queryable view of the complete local map, or nil if the
@@ -493,6 +496,15 @@ func (c *Client) handleEvent(ev packet.Event) {
 	// per-case mu has been released, so handlers may safely call back into
 	// the client (V2).
 	c.callbacks.dispatch(c, ev)
+
+	// Accumulate the event for the next TickState (drained per tick by the
+	// tick driver). Snapshot events are excluded — they drive the tick, they
+	// are not content of it.
+	if _, isSnap := ev.(packet.EventSnapshot); !isSnap {
+		c.mu.Lock()
+		c.tickEvents = append(c.tickEvents, ev)
+		c.mu.Unlock()
+	}
 }
 
 func (c *Client) setErr(err error) {
