@@ -116,3 +116,9 @@ func (c *Client) OnHookedBy(fn func(*Client, packet.EventHookedBy)) func() { ret
 func (c *Client) OnWeaponChange(fn func(*Client, packet.EventWeaponChange)) func() {
 	return On(c, fn)
 }
+
+// OnServerCapabilities registers a handler for the DDNet server capabilities
+// announcement (V47).
+func (c *Client) OnServerCapabilities(fn func(*Client, packet.EventServerCapabilities)) func() {
+	return On(c, fn)
+}

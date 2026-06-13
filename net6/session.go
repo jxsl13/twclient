@@ -65,6 +65,17 @@ type Session struct {
 	parsed        *twmap.Map
 	mapCache      *packet.MapCache // always set: shared or per-session
 	reader        reader           // background reader state (activated by StartReader)
+
+	capsMu sync.RWMutex
+	caps   packet.ServerCapabilities // DDNet server capabilities (T33, V47)
+}
+
+// Capabilities returns the DDNet server capabilities announced for this
+// session, or the zero value if the server has not sent them.
+func (s *Session) Capabilities() packet.ServerCapabilities {
+	s.capsMu.RLock()
+	defer s.capsMu.RUnlock()
+	return s.caps
 }
 
 // NewSession creates a new 0.6 session against the given address.

@@ -55,7 +55,8 @@ type Client struct {
 	clan     string
 	skin     string
 	country  int
-	password string // server password, sent in handshake (V42); empty = unprotected
+	password string                    // server password, sent in handshake (V42); empty = unprotected
+	caps     packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
 	version  packet.Version
 	mapCache *packet.MapCache
 	log      *slog.Logger
@@ -318,6 +319,14 @@ func (c *Client) Err() error {
 	return c.lastErr
 }
 
+// Capabilities returns the DDNet server capabilities last announced for this
+// connection, or the zero value if none were sent (V47).
+func (c *Client) Capabilities() packet.ServerCapabilities {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.caps
+}
+
 // --- Thread-safe game state accessors ---
 
 // Character returns the last known character state.
@@ -513,6 +522,10 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.predTime.Adjust(e.IntendedTick, e.TimeLeft)
 	case packet.EventTuneParams:
 		c.setTuning(e.Raw)
+	case packet.EventServerCapabilities:
+		c.mu.Lock()
+		c.caps = e.Caps
+		c.mu.Unlock()
 	case packet.EventClose:
 		c.log.Warn("server sent CLOSE", "reason", e.Reason)
 		c.setErr(ErrServerClosed)

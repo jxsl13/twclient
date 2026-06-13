@@ -20,6 +20,7 @@ var (
 	uuidSvCommandInfoRemove  = packer.CalculateUUID("commandinfo-remove@netmsg.ddnet.org")
 	uuidSvChangeInfoCooldown = packer.CalculateUUID("change-info-cooldown@netmsg.ddnet.org")
 	uuidSvMapSoundGlobal     = packer.CalculateUUID("map-sound-global@netmsg.ddnet.org")
+	uuidCapabilities         = packer.CalculateUUID("capabilities@ddnet.tw")
 )
 
 // processEx decodes a NETMSG_EX payload: a 16-byte UUID followed by the inner
@@ -53,7 +54,28 @@ func (s *Session) processEx(data []byte) {
 		s.processExChangeInfoCooldown(body)
 	case uuidSvMapSoundGlobal:
 		s.processExMapSoundGlobal(body)
+	case uuidCapabilities:
+		s.processExCapabilities(body)
 	}
+}
+
+// processExCapabilities decodes the DDNet capabilities@ddnet.tw message
+// (Version int, Flags int), stores the result on the session, and emits it.
+func (s *Session) processExCapabilities(data []byte) {
+	u := packer.NewUnpacker(data)
+	version, err := u.GetInt()
+	if err != nil || version <= 0 {
+		return
+	}
+	flags, err := u.GetInt()
+	if err != nil {
+		return
+	}
+	caps := packet.ParseServerCapabilities(version, flags)
+	s.capsMu.Lock()
+	s.caps = caps
+	s.capsMu.Unlock()
+	s.emit(packet.EventServerCapabilities{Caps: caps})
 }
 
 // processExTeamsState reads one ddrace-team value per client (raw ints) and

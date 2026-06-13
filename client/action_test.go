@@ -23,6 +23,7 @@ type stubSession struct {
 func (s *stubSession) Login(context.Context, string, string, ...packet.LoginOption) error {
 	return nil
 }
+func (s *stubSession) Capabilities() packet.ServerCapabilities         { return packet.ServerCapabilities{} }
 func (s *stubSession) Close() error                                    { return nil }
 func (s *stubSession) StartReader(context.Context)                     {}
 func (s *stubSession) EventCh() <-chan packet.Event                    { return nil }

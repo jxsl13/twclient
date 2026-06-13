@@ -21,6 +21,10 @@ type Session interface {
 	// The context controls the handshake and login timeout.
 	Login(ctx context.Context, name, clan string, opts ...packet.LoginOption) error
 
+	// Capabilities returns the DDNet server capabilities announced for this
+	// session, or the zero value if none were sent (vanilla / 0.7 / old DDNet).
+	Capabilities() packet.ServerCapabilities
+
 	// Close disconnects from the server.
 	Close() error
 

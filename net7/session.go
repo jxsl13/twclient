@@ -81,6 +81,12 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 	return s, nil
 }
 
+// Capabilities returns the DDNet server capabilities. 0.7 (sixup) servers do
+// not send the DDNet capabilities message, so this is always the zero value.
+func (s *Session) Capabilities() packet.ServerCapabilities {
+	return packet.ServerCapabilities{}
+}
+
 // Close sends a disconnect and closes the session.
 func (s *Session) Close() error {
 	s.StopReader()
