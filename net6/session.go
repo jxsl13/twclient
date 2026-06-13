@@ -24,14 +24,26 @@ var securityTokenMagic = [4]byte{'T', 'K', 'E', 'N'}
 var SecurityTokenUnknown = [4]byte{0xFF, 0xFF, 0xFF, 0xFF}
 
 // Option configures a Session at construction time.
-type Option func(*Session)
+type Option func(*options)
+
+// options holds the user-configurable settings collected from Option funcs
+// before the Session is built. It is deliberately separate from Session so
+// options apply once to a small value rather than twice to a half-built
+// Session (the logger's "proto" tag, sizes, and cache are resolved here).
+type options struct {
+	log             *slog.Logger
+	mapCache        *packet.MapCache
+	snapStorageSize int
+	eventChanSize   int
+	readBufferSize  int
+}
 
 // WithLogger sets a custom logger for the session.
 // Without this option, logging is silently discarded.
 func WithLogger(logger *slog.Logger) Option {
-	return func(s *Session) {
+	return func(o *options) {
 		if logger != nil {
-			s.log = logger.With("proto", "0.6")
+			o.log = logger
 		}
 	}
 }
@@ -40,9 +52,9 @@ func WithLogger(logger *slog.Logger) Option {
 // cache will deduplicate downloads: only the first session to request a
 // map actually downloads it; the rest wait and reuse the cached result.
 func WithMapCache(cache *packet.MapCache) Option {
-	return func(s *Session) {
+	return func(o *options) {
 		if cache != nil {
-			s.mapCache = cache
+			o.mapCache = cache
 		}
 	}
 }
@@ -51,19 +63,19 @@ func WithMapCache(cache *packet.MapCache) Option {
 // MaxSnaps) used by the reader for delta decompression (V53). Zero or unset
 // keeps the default; the value is validated by packet.WithMaxSnaps.
 func WithSnapStorageSize(n int) Option {
-	return func(s *Session) { s.snapStorageSize = n }
+	return func(o *options) { o.snapStorageSize = n }
 }
 
 // WithEventChanSize sets the buffered capacity of the reader's event channel
 // (V54). Zero or unset keeps the default (128); a positive value is used as-is.
 func WithEventChanSize(n int) Option {
-	return func(s *Session) { s.eventChanSize = n }
+	return func(o *options) { o.eventChanSize = n }
 }
 
 // WithReadBufferSize overrides the UDP receive-buffer size (V54). Zero or unset
 // keeps the default (2MB); forwarded to network.Dial.
 func WithReadBufferSize(n int) Option {
-	return func(s *Session) { s.readBufferSize = n }
+	return func(o *options) { o.readBufferSize = n }
 }
 
 // Session tracks the connection state for a 0.6 / DDNet client session.
@@ -90,6 +102,9 @@ type Session struct {
 
 	capsMu sync.RWMutex
 	caps   packet.ServerCapabilities // DDNet server capabilities (T33, V47)
+
+	huff    *huffman.Huffman // shared decompressor (precomputed dict, read-only)
+	huffBuf []byte           // synchronous-path Decompress buffer; reader uses its own (V75)
 }
 
 // Capabilities returns the DDNet server capabilities announced for this
@@ -104,31 +119,37 @@ func (s *Session) Capabilities() packet.ServerCapabilities {
 // By default, logging is discarded and each session has its own map cache.
 // Use WithLogger and WithMapCache to customize.
 func NewSession(address string, opts ...Option) (*Session, error) {
-	// Apply session options to a temporary to learn the logger early.
-	tmp := &Session{log: slog.New(slog.DiscardHandler)}
+	o := options{
+		log:      slog.New(slog.DiscardHandler),
+		mapCache: packet.NewMapCache(), // per-session default; WithMapCache overrides
+	}
 	for _, opt := range opts {
 		if opt != nil { // a nil option is ignored (V70)
-			opt(tmp)
+			opt(&o)
 		}
 	}
+	log := o.log.With("proto", "0.6")
 	conn, err := network.Dial(address,
-		network.WithLogger(tmp.log),
-		network.WithReadBufferSize(tmp.readBufferSize),
+		network.WithLogger(log),
+		network.WithReadBufferSize(o.readBufferSize),
 	)
 	if err != nil {
 		return nil, err
 	}
 	s := &Session{
-		conn:          conn,
-		clientToken:   packet.RandomToken(),
-		securityToken: SecurityTokenUnknown,
-		log:           tmp.log.With("proto", "0.6"),
-		mapCache:      packet.NewMapCache(),
-	}
-	for _, opt := range opts {
-		if opt != nil { // a nil option is ignored (V70)
-			opt(s)
-		}
+		conn:            conn,
+		clientToken:     packet.RandomToken(),
+		securityToken:   SecurityTokenUnknown,
+		log:             log,
+		mapCache:        o.mapCache,
+		snapStorageSize: o.snapStorageSize,
+		eventChanSize:   o.eventChanSize,
+		readBufferSize:  o.readBufferSize,
+		huff:            huffman.NewHuffman(),
+		// Decompressed payload fits in one packet: DDNet CNetBase::UnpackPacket
+		// decompresses into aBuffer[NET_MAX_PACKETSIZE] (1400). Pre-size so the
+		// reused buffer never reallocates.
+		huffBuf: make([]byte, 0, packet.MaxPacketSize),
 	}
 	return s, nil
 }
@@ -421,7 +442,8 @@ func (s *Session) recvAndParsePayload(ctx context.Context) (Header, []byte, erro
 	if err != nil {
 		return Header{}, nil, err
 	}
-	return s.parsePayload(resp)
+	// Synchronous path: use the session-owned decompress buffer (V75).
+	return s.parsePayload(resp, &s.huffBuf)
 }
 
 // recvAndParsePayloadTimeout is like recvAndParsePayload but uses the given timeout.
@@ -432,11 +454,17 @@ func (s *Session) recvAndParsePayloadTimeout(ctx context.Context, timeout time.D
 	if err != nil {
 		return Header{}, nil, err
 	}
-	return s.parsePayload(resp)
+	// readLoop-exclusive path: use the reader-owned decompress buffer so it
+	// never races the synchronous s.huffBuf (V75).
+	return s.parsePayload(resp, &s.reader.huffBuf)
 }
 
-// parsePayload parses a received packet: header, decompress, strip token.
-func (s *Session) parsePayload(resp []byte) (Header, []byte, error) {
+// parsePayload parses a received packet: header, decompress, strip token. buf is
+// the caller's reusable decompress buffer (reset and grown as needed); the
+// returned payload aliases it. Each receive path passes a buffer owned by its
+// own goroutine (synchronous: &s.huffBuf, reader: &s.reader.huffBuf) so the two
+// never share a buffer concurrently (V75).
+func (s *Session) parsePayload(resp []byte, buf *[]byte) (Header, []byte, error) {
 	var hdr Header
 	if err := hdr.Unpack(resp); err != nil {
 		return hdr, nil, err
@@ -454,8 +482,14 @@ func (s *Session) parsePayload(resp []byte) (Header, []byte, error) {
 	// decompress first, then strip. If decompression fails (e.g. snap data
 	// with edge-case huffman patterns), fall back to raw payload.
 	if hdr.Flags.Compression && !hdr.Flags.Control {
-		d, err := huffman.Decompress(payload)
+		// DecompressTo reuses *buf across calls (0 allocs steady state);
+		// payload is transient and copied out by consumers (V52). s.huff is
+		// only read (immutable dict), so concurrent DecompressTo calls with
+		// distinct buffers are safe (V75).
+		// TODO: migrate to DecompressTo((*buf)[:0], payload)
+		d, err := s.huff.Decompress(payload)
 		if err == nil {
+			*buf = d
 			payload = d
 		} else {
 			s.log.Debug("decompress failed, using raw payload",
@@ -481,7 +515,7 @@ func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) e
 		if err != nil {
 			return fmt.Errorf("session06: recv waiting for map_change: %w", err)
 		}
-		hdr, payload, perr := s.parsePayload(resp)
+		hdr, payload, perr := s.parsePayload(resp, &s.huffBuf)
 		if perr != nil || payload == nil {
 			continue
 		}
@@ -512,7 +546,7 @@ func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) er
 		if err != nil {
 			return fmt.Errorf("session06: recv waiting for con_ready: %w", err)
 		}
-		hdr, payload, perr := s.parsePayload(resp)
+		hdr, payload, perr := s.parsePayload(resp, &s.huffBuf)
 		if perr != nil || payload == nil {
 			continue
 		}

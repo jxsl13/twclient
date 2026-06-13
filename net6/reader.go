@@ -40,6 +40,11 @@ type reader struct {
 	// Goroutine-confined to readLoop; never used for data retained past the
 	// call (multipart parts are copied out, V52).
 	snapUnpacker packer.Unpacker
+	// huffBuf is the readLoop-owned huffman decompress buffer. Separate from
+	// Session.huffBuf so the background reader never shares a decompress buffer
+	// with a synchronous receive (e.g. DownloadMap during a live reader), which
+	// would be a data race (V75).
+	huffBuf []byte
 }
 
 // StartReader launches a background goroutine that reads packets from
@@ -53,6 +58,8 @@ func (s *Session) StartReader(ctx context.Context) {
 	s.reader.eventCh = make(chan packet.Event, eventChanSizeOrDefault(s.eventChanSize))
 	s.reader.snaps = packet.NewSnapStorage(SnapItemSize, packet.WithMaxSnaps(s.snapStorageSize))
 	s.reader.lastRecv.Store(time.Now().UnixNano())
+	// Reader-owned decompress buffer, pre-sized to the protocol max (V75).
+	s.reader.huffBuf = make([]byte, 0, packet.MaxPacketSize)
 
 	go s.readLoop()
 }
