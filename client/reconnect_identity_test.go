@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// V33: ReconnectWithTimeout preserves the client identity (name/clan/skin/
-// country/password) and the stable timeout code even when the reconnect itself
-// fails — none of these are reset by the reconnect path.
-func TestReconnectWithTimeoutPreservesIdentity(t *testing.T) {
+// V33: Reconnect preserves the client identity (name/clan/skin/country/
+// password) and the stable timeout code even when the reconnect itself fails —
+// none of these are reset by the reconnect path, so the next attempt resumes.
+func TestReconnectPreservesIdentity(t *testing.T) {
 	c := New("127.0.0.1:1",
 		WithPlayerInfo("bob", "clanx", "santa", 5),
 		WithPassword("pw"),
@@ -20,7 +20,7 @@ func TestReconnectWithTimeoutPreservesIdentity(t *testing.T) {
 	defer cancel()
 	// The address is unreachable, so this fails — that's fine; we only assert
 	// the identity survives the attempt.
-	_ = c.ReconnectWithTimeout(ctx)
+	_ = c.Reconnect(ctx)
 
 	if c.TimeoutCode() != "code123" {
 		t.Errorf("timeout code changed: %q", c.TimeoutCode())
@@ -30,5 +30,15 @@ func TestReconnectWithTimeoutPreservesIdentity(t *testing.T) {
 	}
 	if c.password != "pw" {
 		t.Errorf("password changed: %q", c.password)
+	}
+}
+
+// V32/V37: ResetTimeoutCode regenerates the code so the next reconnect gets a
+// fresh tee instead of resuming.
+func TestResetTimeoutCode(t *testing.T) {
+	c := New("127.0.0.1:1", WithTimeoutCode("original"))
+	c.ResetTimeoutCode()
+	if c.TimeoutCode() == "original" || c.TimeoutCode() == "" {
+		t.Errorf("ResetTimeoutCode should produce a new non-empty code, got %q", c.TimeoutCode())
 	}
 }

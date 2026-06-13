@@ -325,8 +325,14 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// Reconnect closes the current session (if any) and establishes a new one.
-// The new context governs the new connection's lifetime.
+// Reconnect closes the current session (if any) and establishes a new one,
+// re-using the client identity (name/clan/skin/country/password) and the stable
+// timeout code (V33). Because Connect re-registers the same /timeout <code>, a
+// DDNet 0.6 server reclaims the tee left in the timed-out state, so the player
+// resumes the same position/hook/race progress; non-DDNet/0.7 servers ignore
+// the code and yield a fresh tee (V32, V37). Call ResetTimeoutCode first to
+// force a fresh tee instead of a resume. The new context governs the new
+// connection's lifetime.
 func (c *Client) Reconnect(ctx context.Context) error {
 	c.Close()
 	return c.Connect(ctx)
