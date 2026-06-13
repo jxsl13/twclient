@@ -34,6 +34,7 @@ func Failover() RequestPolicy { return failover{} }
 
 type failover struct{}
 
+// Fetch tries masters in order and returns the first success (RequestPolicy).
 func (failover) Fetch(ctx context.Context, masters []string, try func(context.Context, string) ([]ServerEntry, error)) ([]ServerEntry, error) {
 	var last error
 	for _, m := range masters {
@@ -52,6 +53,8 @@ func RoundRobin() RequestPolicy { return &roundRobin{} }
 
 type roundRobin struct{ cursor atomic.Uint64 }
 
+// Fetch rotates the start master each call, then failover through the rest
+// (RequestPolicy).
 func (r *roundRobin) Fetch(ctx context.Context, masters []string, try func(context.Context, string) ([]ServerEntry, error)) ([]ServerEntry, error) {
 	n := len(masters)
 	if n == 0 {
@@ -80,6 +83,8 @@ type chooseFastest struct {
 	best int // cached winning master index, -1 = none yet
 }
 
+// Fetch reuses the cached best master, else concurrently probes all in random
+// order and caches the fastest valid one (RequestPolicy; DDNet CChooseMaster).
 func (c *chooseFastest) Fetch(ctx context.Context, masters []string, try func(context.Context, string) ([]ServerEntry, error)) ([]ServerEntry, error) {
 	n := len(masters)
 	if n == 0 {
