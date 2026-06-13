@@ -7,6 +7,10 @@ import "github.com/jxsl13/twmap"
 // full multi-label detail.
 type TileClass uint8
 
+// TileClass values — the primary class assigned to each tile for the
+// observation crop, mirroring DDNet's collision/entity tile types
+// (src/game/collision.cpp, src/game/mapitems.h): empty air, solid wall, unhook,
+// hook-through, death, freeze, teleporter, speedup, switch.
 const (
 	ClassAir TileClass = iota
 	ClassSolid
@@ -60,8 +64,10 @@ func NewMapView(m *twmap.Map) *MapView {
 	return v
 }
 
-// Width and Height are the map's tile dimensions.
-func (v *MapView) Width() int  { return v.w }
+// Width is the map width in tiles.
+func (v *MapView) Width() int { return v.w }
+
+// Height is the map height in tiles.
 func (v *MapView) Height() int { return v.h }
 
 func (v *MapView) inBounds(tx, ty int) bool {

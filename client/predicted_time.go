@@ -37,6 +37,7 @@ type smoothTime struct {
 	spikeCounter          int
 }
 
+// Init seeds the smoothed clock to target with no in-flight adjustment.
 func (s *smoothTime) Init(target int64) {
 	s.snap = timeGet()
 	s.current = target
@@ -62,6 +63,8 @@ func (s *smoothTime) Get(now int64) int64 {
 	return c + int64(float64(t-c)*a)
 }
 
+// UpdateInt nudges the smoothed clock toward target, easing the adjustment over
+// time so the predicted tick never jumps (mirrors DDNet CSmoothTime::Update).
 func (s *smoothTime) UpdateInt(now, target int64) {
 	s.current = s.Get(now)
 	s.snap = now
