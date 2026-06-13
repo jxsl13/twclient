@@ -205,7 +205,11 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 	cur := ss.characters
 	prev := ss.prevCharacters
 
-	var evs []packet.Event
+	// Most ticks emit on the order of one event per visible player (move /
+	// attack / hook). Preallocating to len(cur) avoids the slice regrowth
+	// reallocations that otherwise dominate this path's allocation count
+	// alongside the unavoidable packet.Event interface boxing (V51, §PERF T35).
+	evs := make([]packet.Event, 0, len(cur))
 
 	// Presence: enter/leave sight (edge-triggered on set membership).
 	for id := range cur {
@@ -280,9 +284,11 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 		}
 	}
 
-	evs = append(evs, ss.deriveTransient()...)
-	evs = append(evs, ss.deriveGame()...)
-	evs = append(evs, ss.deriveExt()...)
+	// Append directly into evs instead of allocating a fresh slice per
+	// sub-diff and copying it back (V51).
+	evs = ss.deriveTransient(evs)
+	evs = ss.deriveGame(evs)
+	evs = ss.deriveExt(evs)
 
 	return evs
 }
@@ -292,9 +298,9 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 // (TypeID 0, ID >= offsetUUIDType) carry the UUID for an internal type id, and
 // the actual ext object items use that internal type id (>= offsetUUIDType).
 // These objects are DDNet-only; vanilla servers never send them.
-func (ss *SnapStorage) deriveExt() []packet.Event {
+func (ss *SnapStorage) deriveExt(evs []packet.Event) []packet.Event {
 	if ss.lastSnap == nil {
-		return nil
+		return evs
 	}
 
 	// Map internal ext type id -> UUID from the marker items.
@@ -305,10 +311,9 @@ func (ss *SnapStorage) deriveExt() []packet.Event {
 		}
 	}
 	if len(markers) == 0 {
-		return nil
+		return evs
 	}
 
-	var evs []packet.Event
 	for _, it := range ss.lastSnap.Items {
 		if it.TypeID < offsetUUIDType {
 			continue
@@ -412,11 +417,10 @@ func (ss *SnapStorage) diffSpecChar(cid int, f []int) []packet.Event {
 // snapshot's GameInfo, PlayerInfo scores, GameData flag carriers, and
 // SpectatorInfo target against the previous snapshot's values (D in the
 // catalog).
-func (ss *SnapStorage) deriveGame() []packet.Event {
+func (ss *SnapStorage) deriveGame(evs []packet.Event) []packet.Event {
 	if ss.lastSnap == nil {
-		return nil
+		return evs
 	}
-	var evs []packet.Event
 
 	// Round state: game-state flags changed (warmup/paused/game-over/...).
 	if ss.gameStateInit && ss.gameInfo.GameStateFlags != ss.prevGameState {
@@ -501,11 +505,10 @@ func (ss *SnapStorage) deriveGame() []packet.Event {
 // deriveTransient emits events for the one-tick world-event objects in the
 // latest snapshot (explosion/spawn/death/hammer-hit/sound) and for newly
 // appearing projectiles/lasers (V14).
-func (ss *SnapStorage) deriveTransient() []packet.Event {
+func (ss *SnapStorage) deriveTransient(evs []packet.Event) []packet.Event {
 	if ss.lastSnap == nil {
-		return nil
+		return evs
 	}
-	var evs []packet.Event
 
 	curProj := make(map[int]struct{})
 	curLaser := make(map[int]struct{})
