@@ -419,7 +419,7 @@ T27|x|OnDisconnect callback + LastDisconnect(); fire serial in event path before
 T28|x|tests: code stable across reconnect; reason classification + ban-duration parse; default backoff sequence (1s,2s,…,cap 1h) + custom Backoff injected + Reset on success; MaxAttempts bound; ctx-cancel aborts mid-backoff/mid-wait promptly; graceful shutdown sends clean CTRL_CLOSE; resume identity; vanilla degrade; ctors validate (base 0 rejected, defaults applied)|V32,V33,V34,V35,V36,V37,V38,V39,V40,V41
 T29|x|server password: WithPassword option + plumb Connect→Login→SysInfo(version,pw) (net6 session.go:223 + net7 equiv); carry across reconnect; wrong-pw → WrongPassword reason; ⊥ log cleartext; test connect to pw server + wrong-pw classify|V42,V33,V34,I.password
 T30|x|rcon client API: session SendRconAuth/SendRconCmd (net6+net7); RconLogin(ctx,pw) (await EventRconAuth on); Rcon(cmd) require authed (ErrNotAuthed); RconAuthed(); WithRconPassword auto-login|V43,V44,I.rcon
-T31|.|rcon state + reactions: OnRconLine/OnRconAuth/OnRconCmd callbacks; track auth from EventRconAuth, clear on disconnect; re-auth after reconnect; ⊥ log pw cleartext|V44,V45,V46,V33,I.rcon
+T31|x|rcon state + reactions: OnRconLine/OnRconAuth/OnRconCmd callbacks; track auth from EventRconAuth, clear on disconnect; re-auth after reconnect; ⊥ log pw cleartext|V44,V45,V46,V33,I.rcon
 T32|.|tests: auth ok/reject, cmd-before-auth → ErrNotAuthed, log line → OnRconLine fires, re-auth after reconnect, both protocols|V43,V44,V45,V46
 ```
 order: T2–T21 = x (done). password + rcon + reconnect features ACTIVE: T22–T32 = `.` (pending).

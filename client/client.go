@@ -632,6 +632,11 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.errMu.Lock()
 		c.lastDisc = reason
 		c.errMu.Unlock()
+		// rcon auth does not survive a disconnect; clear it so commands are
+		// rejected until re-auth (V44). autoRconLogin re-auths on reconnect (V45).
+		c.mu.Lock()
+		c.rconAuthed = false
+		c.mu.Unlock()
 		c.log.Warn("server sent CLOSE", "reason", e.Reason, "kind", reason.Kind.String())
 		c.setErr(ErrServerClosed)
 		c.fireDisconnect(reason)

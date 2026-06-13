@@ -123,6 +123,22 @@ func (c *Client) OnServerCapabilities(fn func(*Client, packet.EventServerCapabil
 	return On(c, fn)
 }
 
+// OnRconLine registers a handler for remote-console output lines (V46). The
+// handler may issue further commands via c.Rcon.
+func (c *Client) OnRconLine(fn func(*Client, packet.EventRconLine)) func() {
+	return On(c, fn)
+}
+
+// OnRconAuth registers a handler for rcon authentication state changes (V46).
+func (c *Client) OnRconAuth(fn func(*Client, packet.EventRconAuth)) func() {
+	return On(c, fn)
+}
+
+// OnRconCmd registers a handler for rcon command-list changes (V46).
+func (c *Client) OnRconCmd(fn func(*Client, packet.EventRconCmd)) func() {
+	return On(c, fn)
+}
+
 // OnDisconnect registers a handler invoked when the server closes the
 // connection, with the classified reason (V38). Handlers fire serially on the
 // event-loop goroutine before any auto-reconnect attempt, so they must return
