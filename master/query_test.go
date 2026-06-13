@@ -2,11 +2,11 @@ package master
 
 import (
 	"context"
-	"encoding/binary"
 	"net"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/twclient/net7"
 	"github.com/jxsl13/twclient/packer"
 	"github.com/jxsl13/twclient/packet"
 )
@@ -148,19 +148,19 @@ func TestQueryServerInfo06(t *testing.T) {
 // V57/V58: QueryServerInfo (0.7) does the token handshake then getinfo, all
 // connless, no session.
 func TestQueryServerInfo07(t *testing.T) {
-	const serverToken = uint32(0xA1B2C3D4)
+	serverToken := []byte{0xA1, 0xB2, 0xC3, 0xD4}
+	const ctrlControlFlag = 1 // NET_PACKETFLAG_CONTROL
 	addr := fakeUDPServer(t, func(req []byte) []byte {
-		// First packet = control token request (flags CONTROL, ctrl byte 5).
-		if len(req) >= 8 && (req[0]>>2)&flagControl7 != 0 && req[7] == ctrlMsgToken {
-			reply := []byte{byte((flagControl7 << 2) & 0xfc), 0, 0}
-			reply = appendBE32(reply, 0) // header token (client ignores)
-			reply = append(reply, ctrlMsgToken)
-			reply = appendBE32(reply, serverToken) // our assigned token
+		// First packet = control token request (flags CONTROL, ctrl byte = MsgCtrlToken).
+		if len(req) >= 8 && (req[0]>>2)&ctrlControlFlag != 0 && req[7] == net7.MsgCtrlToken {
+			reply := []byte{byte((ctrlControlFlag << 2) & 0xfc), 0, 0}
+			reply = append(reply, 0, 0, 0, 0)        // header token (client ignores)
+			reply = append(reply, net7.MsgCtrlToken) // ctrl msg id
+			reply = append(reply, serverToken...)    // our assigned token (offset 8-11)
 			return reply
 		}
-		// Otherwise = connless getinfo → inf3 reply.
-		reply := make([]byte, connless7Header) // 9-byte connless header (content ignored on recv)
-		binary.BigEndian.PutUint32(reply[1:5], serverToken)
+		// Otherwise = connless getinfo → inf3 reply (9-byte header ignored on recv).
+		reply := make([]byte, net7.HeaderSizeConnless)
 		reply = append(reply, browseInfo...)
 		reply = append(reply, build07Body()...)
 		return reply
