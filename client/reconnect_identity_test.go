@@ -33,12 +33,26 @@ func TestReconnectPreservesIdentity(t *testing.T) {
 	}
 }
 
-// V32/V37: ResetTimeoutCode regenerates the code so the next reconnect gets a
-// fresh tee instead of resuming.
+// V32/V37: ResetTimeoutCode regenerates the code (or sets a given one) so the
+// next reconnect gets a fresh tee instead of resuming.
 func TestResetTimeoutCode(t *testing.T) {
 	c := New("127.0.0.1:1", WithTimeoutCode("original"))
+
+	// No argument → new random non-empty code.
 	c.ResetTimeoutCode()
 	if c.TimeoutCode() == "original" || c.TimeoutCode() == "" {
-		t.Errorf("ResetTimeoutCode should produce a new non-empty code, got %q", c.TimeoutCode())
+		t.Errorf("ResetTimeoutCode() should produce a new non-empty code, got %q", c.TimeoutCode())
+	}
+
+	// Explicit code → set exactly.
+	c.ResetTimeoutCode("chosen")
+	if c.TimeoutCode() != "chosen" {
+		t.Errorf("ResetTimeoutCode(\"chosen\"): got %q", c.TimeoutCode())
+	}
+
+	// Empty string → regenerate, not empty.
+	c.ResetTimeoutCode("")
+	if c.TimeoutCode() == "" || c.TimeoutCode() == "chosen" {
+		t.Errorf("ResetTimeoutCode(\"\") should regenerate, got %q", c.TimeoutCode())
 	}
 }

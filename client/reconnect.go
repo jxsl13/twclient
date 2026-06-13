@@ -10,13 +10,22 @@ import (
 	"github.com/jxsl13/twclient/packet"
 )
 
-// ResetTimeoutCode regenerates the client's timeout code. The next reconnect
-// then registers a NEW code, so a DDNet server will NOT reclaim the previously
-// timed-out tee and the player gets a fresh tee instead. Call this before
-// Reconnect when a clean session is wanted rather than a resume (V32, V37).
-func (c *Client) ResetTimeoutCode() {
+// ResetTimeoutCode replaces the client's timeout code. With no argument (or an
+// empty string) it generates a new random code; pass a string to set a specific
+// one. Either way the next reconnect registers a code different from the one the
+// timed-out tee holds, so a DDNet server gives a fresh tee instead of resuming.
+// Call before Reconnect when a clean session is wanted rather than a resume
+// (V32, V37).
+func (c *Client) ResetTimeoutCode(code ...string) {
+	next := ""
+	if len(code) > 0 {
+		next = code[0]
+	}
+	if next == "" {
+		next = generateTimeoutCode()
+	}
 	c.mu.Lock()
-	c.timeoutCode = generateTimeoutCode()
+	c.timeoutCode = next
 	c.mu.Unlock()
 }
 

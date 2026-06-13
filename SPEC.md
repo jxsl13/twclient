@@ -310,7 +310,7 @@ register: func WithTimeoutCode(code string) Option   // DDNet resume token; empt
 register: func WithAutoReconnect(p ReconnectPolicy) Option
 api: func (c *Client) TimeoutCode() string                       // current code (stable, V32)
 api: func (c *Client) Reconnect(ctx) error                       // existing method, now timeout-aware: reuses identity+stable code → resumes tee (DDNet 0.6); non-DDNet/0.7 = fresh (V37)
-api: func (c *Client) ResetTimeoutCode()                         // regenerate code → next Reconnect gets a FRESH tee instead of resuming (V32). (no dumb ReconnectWithTimeout wrapper — resume is intrinsic to Reconnect)
+api: func (c *Client) ResetTimeoutCode(code ...string)          // set code (or regenerate if omitted/empty) → next Reconnect gets a FRESH tee instead of resuming (V32). (no dumb ReconnectWithTimeout wrapper — resume is intrinsic to Reconnect)
 api: func (c *Client) AutoReconnect(ctx) error                   // loop: reconnect on Backoff schedule (default 1s→×2→cap 1h); Banned retries = unban polls; ctx-abortable; until connected or MaxAttempts (V35,V36,V39); graceful cancel → clean CTRL_CLOSE (V40)
 api: func (c *Client) OnDisconnect(fn func(*Client, DisconnectReason)) func()   // callback on CTRL_CLOSE (V38)
 api: func (c *Client) LastDisconnect() DisconnectReason          // last classified disconnect
