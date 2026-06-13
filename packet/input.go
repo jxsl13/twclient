@@ -5,6 +5,8 @@ import "fmt"
 // Direction represents the horizontal movement direction.
 type Direction int
 
+// Direction values for PlayerInput.Direction (DDNet/TW `m_Direction`): move
+// left, none, or right.
 const (
 	DirLeft  Direction = -1
 	DirNone  Direction = 0
@@ -23,6 +25,7 @@ func (p *PlayerInput) SetDirection(v int) error {
 // JumpState represents whether the jump key is pressed.
 type JumpState int
 
+// JumpState values for PlayerInput.Jump (DDNet/TW `m_Jump`): key released or held.
 const (
 	JumpOff JumpState = 0
 	JumpOn  JumpState = 1
@@ -40,6 +43,7 @@ func (p *PlayerInput) SetJump(v int) error {
 // HookState represents whether the hook key is pressed.
 type HookState int
 
+// HookState values for PlayerInput.Hook (DDNet/TW `m_Hook`): key released or held.
 const (
 	HookOff HookState = 0
 	HookOn  HookState = 1
@@ -57,6 +61,9 @@ func (p *PlayerInput) SetHook(v int) error {
 // PlayerFlag is a bitmask of player state flags.
 type PlayerFlag int
 
+// PlayerFlag bits for PlayerInput.PlayerFlags (DDNet/TW `PLAYERFLAG_*`,
+// datasrc/network.py): OR them together (playing, in menu, chatting, scoreboard
+// open, aiming).
 const (
 	PlayerFlagPlaying    PlayerFlag = 1
 	PlayerFlagInMenu     PlayerFlag = 2
@@ -80,6 +87,8 @@ func (p *PlayerInput) SetPlayerFlags(v int) error {
 // Values are 1-indexed (0 = no weapon change, 1-6 = specific weapon).
 type Weapon int
 
+// Weapon values for PlayerInput.WantedWeapon (DDNet/TW `WEAPON_*`): 0 = no
+// change, 1-6 select hammer/gun/shotgun/grenade/laser/ninja.
 const (
 	WeaponNone    Weapon = 0
 	WeaponHammer  Weapon = 1
@@ -102,6 +111,8 @@ func (p *PlayerInput) SetWantedWeapon(v int) error {
 // WeaponDelta represents a weapon switch delta (0 = no switch, 1 = switch).
 type WeaponDelta int
 
+// WeaponDelta values for PlayerInput.NextWeapon/PrevWeapon: no switch, or
+// step to the adjacent weapon (DDNet/TW `m_NextWeapon`/`m_PrevWeapon`).
 const (
 	WeaponDeltaNone   WeaponDelta = 0
 	WeaponDeltaSwitch WeaponDelta = 1
@@ -148,6 +159,8 @@ func (p *PlayerInput) SetTarget(x, y int) {
 // Names reference the texture atlas entries defined in content.py.
 type Emoticon int
 
+// Emoticon values (DDNet/TW `EMOTICON_*`, datasrc/content.py): the 16 emote
+// atlas entries shared by 0.6 and 0.7; NumEmoticons is their count.
 const (
 	EmoticonOop      Emoticon = 0  // "oop" / surprise
 	EmoticonExclaim  Emoticon = 1  // exclamation / alert

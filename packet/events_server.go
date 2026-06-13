@@ -125,6 +125,8 @@ func (EventVoteStatus) eventTag() {}
 // VoteOptionOp is the kind of vote-option list change.
 type VoteOptionOp int
 
+// VoteOptionOp values: the votable-option menu was cleared, an option added,
+// or an option removed (DDNet Sv_VoteClearOptions / Sv_VoteOptionAdd / Remove).
 const (
 	VoteOptionClear  VoteOptionOp = iota // Sv_VoteClearOptions
 	VoteOptionAdd                        // Sv_VoteOptionAdd / ListAdd
@@ -167,6 +169,8 @@ func (EventRconAuth) eventTag() {}
 // RconCmdOp is whether a command was added or removed.
 type RconCmdOp int
 
+// RconCmdOp values: a command was added to, or removed from, the rcon
+// completion list (DDNet NETMSG_RCON_CMD_ADD / NETMSG_RCON_CMD_REM).
 const (
 	RconCmdAdd RconCmdOp = iota
 	RconCmdRemove

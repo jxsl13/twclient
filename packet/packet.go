@@ -19,6 +19,8 @@ var TokenZero = Token{0x00, 0x00, 0x00, 0x00}
 // Version distinguishes protocol versions.
 type Version int
 
+// Protocol versions selected via client.WithVersion / net6 vs net7: Teeworlds
+// 0.6 (DDNet variant) and 0.7 (sixup).
 const (
 	Version06 Version = 6
 	Version07 Version = 7
