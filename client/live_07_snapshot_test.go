@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -16,13 +17,13 @@ import (
 // "0.7-only" means the master lists the server with a 0.7 address and NO 0.6
 // address — this excludes DDNet sixup servers that register both protocols, so
 // the test exercises a genuine pure-0.7 path. The test skips cleanly when:
-//   - run under -short,
+//   - not opted in (TW_LIVE unset),
 //   - the master is unreachable,
 //   - no 0.7-only server is currently registered,
 //   - or none of the candidates accept a session (offline / UDP blocked).
 func TestLive07Snapshot(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live 0.7 session; skipped under -short")
+	if os.Getenv("TW_LIVE") == "" {
+		t.Skip("live 0.7 session; set TW_LIVE=1 to run (V118)")
 	}
 
 	fetchCtx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

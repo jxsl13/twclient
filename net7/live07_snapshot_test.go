@@ -99,8 +99,8 @@ func captureSnapshot(t *testing.T, addr string) (*packet.Snapshot, bool) {
 // snapshot decoding (T121/T128, V108). It skips when no 0.7-only server is
 // reachable; it is a live-network test, skipped under -short.
 func TestLive07Snapshot(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live-network test; skipped in -short")
+	if os.Getenv("TW_LIVE") == "" {
+		t.Skip("live-network test; set TW_LIVE=1 to run (V118)")
 	}
 	addrs := find07OnlyServers(t)
 	t.Logf("found %d pure-0.7 server(s)", len(addrs))
@@ -166,8 +166,8 @@ func find07SixupServers(t *testing.T) []string {
 // the full login (incl. the pre-READY map download, T131) + snapshot decode and
 // logs the captured object layout. Skips if none reachable; -short skips it.
 func TestLive07SnapshotSixup(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live-network test; skipped in -short")
+	if os.Getenv("TW_LIVE") == "" {
+		t.Skip("live-network test; set TW_LIVE=1 to run (V118)")
 	}
 	addrs := find07SixupServers(t)
 	t.Logf("found %d DDNet sixup 0.7 server(s)", len(addrs))

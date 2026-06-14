@@ -2,20 +2,21 @@ package master
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/jxsl13/twclient/packet"
 )
 
-// Live tests hit the real DDNet masters / servers. They skip cleanly under
-// -short or when nothing answers with a 2xx (offline / blocked), so the normal
-// suite stays green without network.
+// Live tests hit the real DDNet masters / servers. They are OPT-IN: skipped
+// unless TW_LIVE is set (V118), so the default `go test ./...` stays hermetic
+// (no public-network access). They also skip when nothing answers with a 2xx.
 
 // V56: the real DDNet masters return a decodable, non-empty server list.
 func TestLiveFetchServerList(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live master fetch; skipped under -short")
+	if os.Getenv("TW_LIVE") == "" {
+		t.Skip("live master fetch; set TW_LIVE=1 to run (V118)")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -48,8 +49,8 @@ func TestLiveFetchServerList(t *testing.T) {
 // V57/V58: a 0.6 server from the live list answers a connless info query
 // (no session), and the result matches the master-listed name.
 func TestLiveQueryServerInfo(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live server query; skipped under -short")
+	if os.Getenv("TW_LIVE") == "" {
+		t.Skip("live server query; set TW_LIVE=1 to run (V118)")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
