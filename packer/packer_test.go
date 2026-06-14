@@ -55,7 +55,7 @@ func TestPackUnpackIntViaUnpacker(t *testing.T) {
 func TestPackUnpackString(t *testing.T) {
 	t.Parallel()
 	s := "hello world"
-	packed := PackStr(s)
+	packed := PackString(s)
 	u := NewUnpacker(packed)
 	got, err := u.NextString()
 	if err != nil {

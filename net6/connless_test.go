@@ -43,21 +43,21 @@ func TestConnlessInfoPayload(t *testing.T) {
 // the player list, password flag, and derived counts.
 func TestParseInfoResponse(t *testing.T) {
 	var b []byte
-	b = append(b, packer.PackStr("12")...)        // token
-	b = append(b, packer.PackStr("0.6.5")...)     // version
-	b = append(b, packer.PackStr("My Server")...) // name
-	b = append(b, packer.PackStr("dm1")...)       // map
-	b = append(b, packer.PackStr("DM")...)        // gametype
-	b = append(b, packer.PackStr("1")...)         // flags (password)
-	b = append(b, packer.PackStr("2")...)         // num players
-	b = append(b, packer.PackStr("16")...)        // max players
-	b = append(b, packer.PackStr("3")...)         // num clients
-	b = append(b, packer.PackStr("16")...)        // max clients
-	b = append(b, packer.PackStr("alice")...)
-	b = append(b, packer.PackStr("ACL")...)
-	b = append(b, packer.PackStr("-1")...) // country
-	b = append(b, packer.PackStr("10")...) // score
-	b = append(b, packer.PackStr("1")...)  // is player
+	b = append(b, packer.PackString("12")...)        // token
+	b = append(b, packer.PackString("0.6.5")...)     // version
+	b = append(b, packer.PackString("My Server")...) // name
+	b = append(b, packer.PackString("dm1")...)       // map
+	b = append(b, packer.PackString("DM")...)        // gametype
+	b = append(b, packer.PackString("1")...)         // flags (password)
+	b = append(b, packer.PackString("2")...)         // num players
+	b = append(b, packer.PackString("16")...)        // max players
+	b = append(b, packer.PackString("3")...)         // num clients
+	b = append(b, packer.PackString("16")...)        // max clients
+	b = append(b, packer.PackString("alice")...)
+	b = append(b, packer.PackString("ACL")...)
+	b = append(b, packer.PackString("-1")...) // country
+	b = append(b, packer.PackString("10")...) // score
+	b = append(b, packer.PackString("1")...)  // is player
 
 	info, err := ParseInfoResponse(b)
 	if err != nil {

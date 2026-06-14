@@ -64,11 +64,11 @@ func BenchmarkPackInt(b *testing.B) {
 	}
 }
 
-func BenchmarkPackStr(b *testing.B) {
+func BenchmarkPackString(b *testing.B) {
 	const s = "default"
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = PackStr(s)
+		_ = PackString(s)
 	}
 }
 

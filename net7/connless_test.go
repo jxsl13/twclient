@@ -58,20 +58,20 @@ func TestConnlessInfoPayload(t *testing.T) {
 // to packet.ServerInfo. A spectator (flag 1) yields IsPlayer=false.
 func TestParseInfoResponse(t *testing.T) {
 	var b []byte
-	b = append(b, packer.PackInt(99)...)             // token
-	b = append(b, packer.PackStr("0.7")...)          // version
-	b = append(b, packer.PackStr("Seven Srv")...)    // name
-	b = append(b, packer.PackStr("host.example")...) // hostname (0.7 only)
-	b = append(b, packer.PackStr("ctf1")...)         // map
-	b = append(b, packer.PackStr("CTF")...)          // gametype
-	b = append(b, packer.PackInt(0)...)              // flags (no password)
-	b = append(b, packer.PackInt(2)...)              // skill level (0.7 only)
-	b = append(b, packer.PackInt(1)...)              // num players
-	b = append(b, packer.PackInt(8)...)              // max players
-	b = append(b, packer.PackInt(2)...)              // num clients
-	b = append(b, packer.PackInt(8)...)              // max clients
-	b = append(b, packer.PackStr("bob")...)
-	b = append(b, packer.PackStr("")...)
+	b = append(b, packer.PackInt(99)...)                // token
+	b = append(b, packer.PackString("0.7")...)          // version
+	b = append(b, packer.PackString("Seven Srv")...)    // name
+	b = append(b, packer.PackString("host.example")...) // hostname (0.7 only)
+	b = append(b, packer.PackString("ctf1")...)         // map
+	b = append(b, packer.PackString("CTF")...)          // gametype
+	b = append(b, packer.PackInt(0)...)                 // flags (no password)
+	b = append(b, packer.PackInt(2)...)                 // skill level (0.7 only)
+	b = append(b, packer.PackInt(1)...)                 // num players
+	b = append(b, packer.PackInt(8)...)                 // max players
+	b = append(b, packer.PackInt(2)...)                 // num clients
+	b = append(b, packer.PackInt(8)...)                 // max clients
+	b = append(b, packer.PackString("bob")...)
+	b = append(b, packer.PackString("")...)
 	b = append(b, packer.PackInt(49)...) // country
 	b = append(b, packer.PackInt(5)...)  // score
 	b = append(b, packer.PackInt(1)...)  // spectator

@@ -35,9 +35,9 @@ func lossyMockServer(t *testing.T, dropN int) string {
 	}
 	mapChange := func() []byte {
 		msg := packer.PackMsgID(MsgSysMapChange, true)
-		msg = append(msg, packer.PackStr("dm1")...) // name
-		msg = append(msg, packer.PackInt(0)...)     // crc
-		msg = append(msg, packer.PackInt(0)...)     // size
+		msg = append(msg, packer.PackString("dm1")...) // name
+		msg = append(msg, packer.PackInt(0)...)        // crc
+		msg = append(msg, packer.PackInt(0)...)        // size
 		return chunkPkt(1, msg)
 	}
 	conReady := func() []byte { return chunkPkt(2, packer.PackMsgID(MsgSysConReady, true)) }

@@ -42,7 +42,7 @@ func CtrlKeepAlive() []byte {
 func CtrlClose(reason string) []byte {
 	data := []byte{MsgCtrlClose}
 	if reason != "" {
-		data = append(data, packer.PackStr(reason)...)
+		data = append(data, packer.PackString(reason)...)
 	}
 	return data
 }
@@ -53,8 +53,8 @@ func CtrlClose(reason string) []byte {
 func SysInfo(version string, password string) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgSysInfo, true)...)
-	data = append(data, packer.PackStr(version)...)
-	data = append(data, packer.PackStr(password)...)
+	data = append(data, packer.PackString(version)...)
+	data = append(data, packer.PackString(password)...)
 	return data
 }
 
@@ -95,7 +95,7 @@ func SysPingReply() []byte {
 func SysRconAuth(password string) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgSysRconAuth, true)...)
-	data = append(data, packer.PackStr(password)...)
+	data = append(data, packer.PackString(password)...)
 	return data
 }
 
@@ -103,7 +103,7 @@ func SysRconAuth(password string) []byte {
 func SysRconCmd(cmd string) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgSysRconCmd, true)...)
-	data = append(data, packer.PackStr(cmd)...)
+	data = append(data, packer.PackString(cmd)...)
 	return data
 }
 
@@ -122,7 +122,7 @@ func GameClSay(team bool, message string) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgGameClSay, false)...)
 	data = append(data, packer.PackBool(team)...)
-	data = append(data, packer.PackStr(message)...)
+	data = append(data, packer.PackString(message)...)
 	return data
 }
 
@@ -131,11 +131,11 @@ func GameClStartInfo(name, clan string, country int,
 	skinParts [6]string, useCustomColors [6]bool, colorBody [6]int) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgGameClStartInfo, false)...)
-	data = append(data, packer.PackStr(name)...)
-	data = append(data, packer.PackStr(clan)...)
+	data = append(data, packer.PackString(name)...)
+	data = append(data, packer.PackString(clan)...)
 	data = append(data, packer.PackInt(country)...)
 	for i := range 6 {
-		data = append(data, packer.PackStr(skinParts[i])...)
+		data = append(data, packer.PackString(skinParts[i])...)
 	}
 	for i := range 6 {
 		data = append(data, packer.PackBool(useCustomColors[i])...)
@@ -180,9 +180,9 @@ func GameClVote(vote int) []byte {
 func GameClCallVote(voteType, value, reason string) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgGameClCallVote, false)...)
-	data = append(data, packer.PackStr(voteType)...)
-	data = append(data, packer.PackStr(value)...)
-	data = append(data, packer.PackStr(reason)...)
+	data = append(data, packer.PackString(voteType)...)
+	data = append(data, packer.PackString(value)...)
+	data = append(data, packer.PackString(reason)...)
 	data = append(data, packer.PackInt(0)...) // m_Force
 	return data
 }

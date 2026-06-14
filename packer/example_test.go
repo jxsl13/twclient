@@ -17,7 +17,7 @@ func ExamplePackInt() {
 
 // Strings are NUL-terminated on the wire; NextString reads one back.
 func ExampleUnpacker_NextString() {
-	wire := packer.PackStr("hello")
+	wire := packer.PackString("hello")
 	s, err := packer.NewUnpacker(wire).NextString()
 	fmt.Printf("%q %v\n", s, err)
 	// Output: "hello" <nil>

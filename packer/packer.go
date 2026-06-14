@@ -207,8 +207,8 @@ func AppendMsgID(dst []byte, msgID int, system bool) []byte {
 // Values are clamped to 32-bit range [-2147483648, 2147483647].
 func PackInt(num int) []byte { return AppendInt(nil, num) }
 
-// PackStr packs a string as null-terminated bytes.
-func PackStr(s string) []byte { return AppendStr(nil, s) }
+// PackString packs a string as null-terminated bytes.
+func PackString(s string) []byte { return AppendStr(nil, s) }
 
 // PackBool packs a boolean as a single packed int (0 or 1).
 func PackBool(v bool) []byte { return AppendBool(nil, v) }

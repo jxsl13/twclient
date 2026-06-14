@@ -13,43 +13,43 @@ import (
 // build06Body assembles a 0.6 inf3 body (decimal-string ints) with one client.
 func build06Body() []byte {
 	var b []byte
-	b = append(b, packer.PackStr("12")...)        // token
-	b = append(b, packer.PackStr("0.6.5")...)     // version
-	b = append(b, packer.PackStr("My Server")...) // name
-	b = append(b, packer.PackStr("dm1")...)       // map
-	b = append(b, packer.PackStr("DM")...)        // gametype
-	b = append(b, packer.PackStr("1")...)         // flags (password)
-	b = append(b, packer.PackStr("2")...)         // num players
-	b = append(b, packer.PackStr("16")...)        // max players
-	b = append(b, packer.PackStr("3")...)         // num clients
-	b = append(b, packer.PackStr("16")...)        // max clients
+	b = append(b, packer.PackString("12")...)        // token
+	b = append(b, packer.PackString("0.6.5")...)     // version
+	b = append(b, packer.PackString("My Server")...) // name
+	b = append(b, packer.PackString("dm1")...)       // map
+	b = append(b, packer.PackString("DM")...)        // gametype
+	b = append(b, packer.PackString("1")...)         // flags (password)
+	b = append(b, packer.PackString("2")...)         // num players
+	b = append(b, packer.PackString("16")...)        // max players
+	b = append(b, packer.PackString("3")...)         // num clients
+	b = append(b, packer.PackString("16")...)        // max clients
 	// client 1 (player)
-	b = append(b, packer.PackStr("alice")...)
-	b = append(b, packer.PackStr("ACL")...)
-	b = append(b, packer.PackStr("-1")...) // country
-	b = append(b, packer.PackStr("10")...) // score
-	b = append(b, packer.PackStr("1")...)  // is player
+	b = append(b, packer.PackString("alice")...)
+	b = append(b, packer.PackString("ACL")...)
+	b = append(b, packer.PackString("-1")...) // country
+	b = append(b, packer.PackString("10")...) // score
+	b = append(b, packer.PackString("1")...)  // is player
 	return b
 }
 
 // build07Body assembles a 0.7 inf3 body (varint ints) with one client.
 func build07Body() []byte {
 	var b []byte
-	b = append(b, packer.PackInt(99)...)             // token (varint)
-	b = append(b, packer.PackStr("0.7")...)          // version
-	b = append(b, packer.PackStr("Seven Srv")...)    // name
-	b = append(b, packer.PackStr("host.example")...) // hostname (0.7 only)
-	b = append(b, packer.PackStr("ctf1")...)         // map
-	b = append(b, packer.PackStr("CTF")...)          // gametype
-	b = append(b, packer.PackInt(0)...)              // flags (no password)
-	b = append(b, packer.PackInt(2)...)              // skill level (0.7 only)
-	b = append(b, packer.PackInt(1)...)              // num players
-	b = append(b, packer.PackInt(8)...)              // max players
-	b = append(b, packer.PackInt(2)...)              // num clients
-	b = append(b, packer.PackInt(8)...)              // max clients
+	b = append(b, packer.PackInt(99)...)                // token (varint)
+	b = append(b, packer.PackString("0.7")...)          // version
+	b = append(b, packer.PackString("Seven Srv")...)    // name
+	b = append(b, packer.PackString("host.example")...) // hostname (0.7 only)
+	b = append(b, packer.PackString("ctf1")...)         // map
+	b = append(b, packer.PackString("CTF")...)          // gametype
+	b = append(b, packer.PackInt(0)...)                 // flags (no password)
+	b = append(b, packer.PackInt(2)...)                 // skill level (0.7 only)
+	b = append(b, packer.PackInt(1)...)                 // num players
+	b = append(b, packer.PackInt(8)...)                 // max players
+	b = append(b, packer.PackInt(2)...)                 // num clients
+	b = append(b, packer.PackInt(8)...)                 // max clients
 	// client 1 (spectator)
-	b = append(b, packer.PackStr("bob")...)
-	b = append(b, packer.PackStr("")...)
+	b = append(b, packer.PackString("bob")...)
+	b = append(b, packer.PackString("")...)
 	b = append(b, packer.PackInt(49)...) // country
 	b = append(b, packer.PackInt(5)...)  // score
 	b = append(b, packer.PackInt(1)...)  // flag: 1 = spectator

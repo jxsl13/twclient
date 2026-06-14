@@ -36,19 +36,19 @@ func TestProcessChatVariants(t *testing.T) {
 	s := newTestSession()
 
 	// Normal public chat: team ALL (-2), author 4.
-	s.processChat(append(packInts(-2, 4), packer.PackStr("hello")...))
+	s.processChat(append(packInts(-2, 4), packer.PackString("hello")...))
 	if e, ok := recv(t, s).(packet.EventChat); !ok || e.ClientID != 4 || e.Msg != "hello" {
 		t.Errorf("chat decode wrong: %#v", e)
 	}
 
 	// Server message: author -1.
-	s.processChat(append(packInts(-2, -1), packer.PackStr("srv")...))
+	s.processChat(append(packInts(-2, -1), packer.PackString("srv")...))
 	if e, ok := recv(t, s).(packet.EventServerMsg); !ok || e.Msg != "srv" {
 		t.Errorf("server-msg decode wrong: %#v", e)
 	}
 
 	// Whisper received: team WHISPER_RECV (3), from 7.
-	s.processChat(append(packInts(TeamWhisperRecv, 7), packer.PackStr("psst")...))
+	s.processChat(append(packInts(TeamWhisperRecv, 7), packer.PackString("psst")...))
 	if e, ok := recv(t, s).(packet.EventWhisper); !ok || e.FromID != 7 || e.Msg != "psst" {
 		t.Errorf("whisper decode wrong: %#v", e)
 	}
@@ -65,7 +65,7 @@ func TestProcessKillMsg(t *testing.T) {
 
 func TestProcessVoteSetAndStatus(t *testing.T) {
 	s := newTestSession()
-	s.processVoteSet(append(append(packInts(30), packer.PackStr("kick foo")...), packer.PackStr("spam")...))
+	s.processVoteSet(append(append(packInts(30), packer.PackString("kick foo")...), packer.PackString("spam")...))
 	if e, ok := recv(t, s).(packet.EventVoteSet); !ok || e.Timeout != 30 || e.Desc != "kick foo" || e.Reason != "spam" {
 		t.Errorf("voteset decode wrong: %#v", e)
 	}
@@ -88,7 +88,7 @@ func TestProcessExMessages(t *testing.T) {
 	}
 
 	// CommandInfo: name, args, help (note wire order).
-	ci := append(uuidSvCommandInfo[:], append(append(packer.PackStr("me"), packer.PackStr("")...), packer.PackStr("show name")...)...)
+	ci := append(uuidSvCommandInfo[:], append(append(packer.PackString("me"), packer.PackString("")...), packer.PackString("show name")...)...)
 	s.processEx(ci)
 	if e, ok := recv(t, s).(packet.EventCommandInfo); !ok || e.Name != "me" || e.Help != "show name" {
 		t.Errorf("ext commandinfo decode wrong: %#v", e)
@@ -118,7 +118,7 @@ func TestProcessExMessages(t *testing.T) {
 func TestProcessSysEvents(t *testing.T) {
 	s := newTestSession()
 
-	s.processRconLine(packer.PackStr("[server]: hello"))
+	s.processRconLine(packer.PackString("[server]: hello"))
 	if e, ok := recv(t, s).(packet.EventRconLine); !ok || e.Line != "[server]: hello" {
 		t.Errorf("rcon line decode wrong: %#v", e)
 	}
@@ -128,12 +128,12 @@ func TestProcessSysEvents(t *testing.T) {
 		t.Errorf("rcon auth decode wrong: %#v", e)
 	}
 
-	s.processRconCmdAdd(append(append(packer.PackStr("kick"), packer.PackStr("kick a player")...), packer.PackStr("i?r")...))
+	s.processRconCmdAdd(append(append(packer.PackString("kick"), packer.PackString("kick a player")...), packer.PackString("i?r")...))
 	if e, ok := recv(t, s).(packet.EventRconCmd); !ok || e.Op != packet.RconCmdAdd || e.Cmd != "kick" {
 		t.Errorf("rcon cmd add decode wrong: %#v", e)
 	}
 
-	s.processServerError(packer.PackStr("wrong password"))
+	s.processServerError(packer.PackString("wrong password"))
 	if e, ok := recv(t, s).(packet.EventServerError); !ok || e.Msg != "wrong password" {
 		t.Errorf("server error decode wrong: %#v", e)
 	}
@@ -146,7 +146,7 @@ func TestProcessEmoticonBroadcast(t *testing.T) {
 		t.Errorf("emoticon decode wrong: %#v", e)
 	}
 
-	s.processBroadcast(packer.PackStr("server restarting"))
+	s.processBroadcast(packer.PackString("server restarting"))
 	if e, ok := recv(t, s).(packet.EventBroadcast); !ok || e.Text != "server restarting" {
 		t.Errorf("broadcast decode wrong: %#v", e)
 	}

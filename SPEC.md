@@ -332,7 +332,7 @@ scope = LIBRARY client only (`packer`,`packet`,`net6`,`net7`,`physics`,`client`)
 ```
 harness (T34): table benches w/ -benchmem, ⊥ new deps (testing.B only):
   packet:  BenchmarkProcessSnap / BenchmarkApplyDelta (full + empty delta; realistic 64-char snap)
-  packer:  BenchmarkUnpackInt / BenchmarkGetString / BenchmarkPackInt+PackStr+PackMsgID
+  packer:  BenchmarkUnpackInt / BenchmarkGetString / BenchmarkPackInt+PackString+PackMsgID
   net6/7:  BenchmarkProcessMessage (snap chunk → event)
   client:  BenchmarkPredictTick (PredictedWorld.Tick) / BenchmarkBuildTickState / BenchmarkDeriveEvents (snap.go diff)
   pprof:   `go test -bench . -benchmem -cpuprofile -memprofile` per pkg; record baseline alloc/op + ns/op.

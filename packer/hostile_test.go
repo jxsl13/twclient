@@ -24,6 +24,6 @@ func TestHostileInputNoPanic(t *testing.T) {
 	// Pack side: extreme values must not panic.
 	_ = PackInt(-1 << 62)
 	_ = PackInt(1<<62 - 1)
-	_ = PackStr("")
+	_ = PackString("")
 	_ = AppendInt(nil, 0)
 }
