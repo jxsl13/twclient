@@ -66,7 +66,7 @@ func TestObjAsMessage07(t *testing.T) {
 	ci = append(ci, packer.PackString("nameless")...)
 	ci = append(ci, packer.PackString("clan")...)
 	ci = append(ci, packInts(-1)...) // country
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		ci = append(ci, packer.PackString("part")...)
 	}
 	ci = append(ci, packInts(0, 0, 0, 0, 0, 0)...) // useCustomColors

@@ -129,7 +129,7 @@ func TestPredictedWorldReSimDeterministic(t *testing.T) {
 
 	// Reference: drive a fresh core the same way.
 	ref := seedCore(col, tun, physics.DefaultWorldConfig(), seed)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		ref.Step(inputToPhysics(in))
 	}
 	rx, ry := ref.QuantizedPos()

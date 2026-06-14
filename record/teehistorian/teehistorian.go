@@ -139,12 +139,12 @@ func Parse(r io.Reader) (*File, error) {
 	}
 	rest := data[len(Magic):]
 
-	nul := bytes.IndexByte(rest, 0)
-	if nul < 0 {
+	before, after, ok := bytes.Cut(rest, []byte{0})
+	if !ok {
 		return nil, errors.New("teehistorian: unterminated JSON header")
 	}
-	hdrJSON := rest[:nul]
-	body := rest[nul+1:]
+	hdrJSON := before
+	body := after
 
 	f := &File{}
 	f.Header.Raw = append(json.RawMessage(nil), hdrJSON...)

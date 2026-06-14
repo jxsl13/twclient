@@ -31,7 +31,7 @@ func TestParsePayloadConcurrentBuffers(t *testing.T) {
 	// Each buffer has a single owner goroutine (the real contract); the two
 	// owners run concurrently. A buffer is never shared between goroutines.
 	owner := func(buf *[]byte) {
-		for i := 0; i < 2000; i++ {
+		for range 2000 {
 			_, payload, perr := s.parsePayload(resp, buf)
 			if perr != nil {
 				t.Errorf("parsePayload: %v", perr)

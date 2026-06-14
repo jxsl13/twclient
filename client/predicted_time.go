@@ -201,7 +201,7 @@ func (p *PredictedTime) Adjust(intendedTick, timeLeftMs int) {
 		return
 	}
 	now := timeGet()
-	for k := 0; k < inputRingSize; k++ {
+	for k := range inputRingSize {
 		if p.inputs[k].tick == intendedTick {
 			target := p.inputs[k].predictedTime + (now - p.inputs[k].time)
 			target -= int64(float64(timeLeftMs-predictionMarginMs) / 1000.0 * float64(timeFreq))

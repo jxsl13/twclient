@@ -115,35 +115,37 @@ type (
 		Tick     int
 		Keyframe bool
 	}
-	// DataChunk is a snapshot, snapshot delta or network message. Payload holds
-	// the original huffman-compressed teeworlds-varint bytes verbatim (so the
-	// chunk round-trips byte-for-byte); use [DataChunk.Decompress] / [DataChunk.Ints]
-	// to decode it.
+	// DataChunk is a snapshot, snapshot delta or network message. Data holds the
+	// huffman-DECOMPRESSED teeworlds-varint bytes (the intpacked payload); on
+	// write it is re-compressed with huffman. We keep only the decompressed form
+	// in memory (never both forms). Huffman re-compression is not guaranteed
+	// byte-identical to DDNet's output, so round-trip equality is verified at the
+	// Go-struct level (Parse∘WriteTo∘Parse is deep-equal), which lossless huffman
+	// guarantees regardless of the compressor's byte determinism (V91). Use
+	// [DataChunk.Ints] to unpack the integer stream.
 	DataChunk struct {
-		Type    ChunkType
-		Payload []byte
+		Type ChunkType
+		Data []byte
 	}
 )
 
 func (TickMarker) isChunk() {}
 func (DataChunk) isChunk()  {}
 
-// Decompress returns the huffman-decompressed payload (still teeworlds-varint
-// packed). For snapshot/delta chunks this is the intpacked snapshot data; for
-// message chunks the packed message.
-func (c DataChunk) Decompress() ([]byte, error) {
-	return huffman.Decompress(c.Payload)
+// decompressDataChunk builds a DataChunk from a compressed on-disk payload.
+func decompressDataChunk(typ ChunkType, compressed []byte) (DataChunk, error) {
+	data, err := huffman.Decompress(compressed)
+	if err != nil {
+		return DataChunk{}, fmt.Errorf("demo: decompress chunk: %w", err)
+	}
+	return DataChunk{Type: typ, Data: data}, nil
 }
 
-// Ints decompresses the payload and unpacks it into the teeworlds-varint integer
-// stream it encodes (the trailing zero ints come from DDNet's 4-byte alignment
-// padding of the data before compression).
+// Ints unpacks the decompressed payload into the teeworlds-varint integer stream
+// it encodes (the trailing zero ints come from DDNet's 4-byte alignment padding
+// of the data before compression).
 func (c DataChunk) Ints() ([]int, error) {
-	raw, err := c.Decompress()
-	if err != nil {
-		return nil, err
-	}
-	u := packer.NewUnpacker(raw)
+	u := packer.NewUnpacker(c.Data)
 	var out []int
 	for u.RemainingSize() > 0 {
 		v, err := u.NextInt()
@@ -157,8 +159,8 @@ func (c DataChunk) Ints() ([]int, error) {
 
 // cstr reads a NUL-terminated (or full) string out of a fixed-size field.
 func cstr(b []byte) string {
-	if i := bytes.IndexByte(b, 0); i >= 0 {
-		return string(b[:i])
+	if before, _, ok := bytes.Cut(b, []byte{0}); ok {
+		return string(before)
 	}
 	return string(b)
 }
@@ -201,12 +203,9 @@ func marshalFixedHeader(h Header) []byte {
 
 // parseTimeline decodes the 260-byte CTimelineMarkers block.
 func parseTimeline(b []byte) []int32 {
-	num := int(binary.BigEndian.Uint32(b[0:4]))
-	if num > maxTimelineMarkers {
-		num = maxTimelineMarkers
-	}
+	num := min(int(binary.BigEndian.Uint32(b[0:4])), maxTimelineMarkers)
 	markers := make([]int32, num)
-	for i := 0; i < num; i++ {
+	for i := range num {
 		markers[i] = int32(binary.BigEndian.Uint32(b[4+i*4 : 8+i*4]))
 	}
 	return markers
@@ -214,14 +213,11 @@ func parseTimeline(b []byte) []int32 {
 
 // appendTimeline re-encodes the 260-byte CTimelineMarkers block.
 func appendTimeline(b []byte, markers []int32) []byte {
-	num := len(markers)
-	if num > maxTimelineMarkers {
-		num = maxTimelineMarkers
-	}
+	num := min(len(markers), maxTimelineMarkers)
 	var n [4]byte
 	binary.BigEndian.PutUint32(n[:], uint32(num))
 	b = append(b, n[:]...)
-	for i := 0; i < maxTimelineMarkers; i++ {
+	for i := range maxTimelineMarkers {
 		var m [4]byte
 		if i < num {
 			binary.BigEndian.PutUint32(m[:], uint32(markers[i]))
@@ -382,7 +378,7 @@ func readChunk(c *sliceReader, version uint8, prevTick *int) (Chunk, error) {
 	if err != nil {
 		return nil, fmt.Errorf("demo: chunk payload: %w", err)
 	}
-	return DataChunk{Type: typ, Payload: payload}, nil
+	return decompressDataChunk(typ, payload)
 }
 
 // tickDelta classifies a tickmarker leading byte: when absolute is true the tick
@@ -398,27 +394,35 @@ func tickDelta(b byte, version uint8) (delta int, absolute bool) {
 	return 0, true
 }
 
-// WriteTo re-serializes the file, byte-identical to a DDNet-written input: the
-// preamble (header + timeline + SHA256 ext + map) followed by the chunk stream.
+// WriteTo re-serializes the file: the preamble (header + timeline + SHA256 ext +
+// map) followed by the chunk stream, re-compressing each data chunk with huffman.
+// The output deep-equals the input when re-parsed (V91); it is byte-identical
+// whenever huffman re-compression is deterministic, but that is not relied upon.
 func (f *File) WriteTo(w io.Writer) (int64, error) {
 	b := f.Header.marshalPreamble()
 	prevTick := -1
 	for _, ch := range f.Chunks {
-		b = appendChunk(b, ch, f.Header.Version, &prevTick)
+		var err error
+		b, err = appendChunk(b, ch, &prevTick)
+		if err != nil {
+			return 0, err
+		}
 	}
 	n, err := w.Write(b)
 	return int64(n), err
 }
 
-// appendChunk encodes one chunk, mirroring DDNet's WriteTickMarker / Write.
-func appendChunk(b []byte, ch Chunk, version uint8, prevTick *int) []byte {
+// appendChunk encodes one chunk, mirroring DDNet's WriteTickMarker / Write. The
+// write path always emits the current (version >= 5) wire form, so it needs no
+// version (only the read path classifies legacy tick markers).
+func appendChunk(b []byte, ch Chunk, prevTick *int) ([]byte, error) {
 	switch c := ch.(type) {
 	case TickMarker:
-		return appendTickMarker(b, c, prevTick)
+		return appendTickMarker(b, c, prevTick), nil
 	case DataChunk:
 		return appendDataChunk(b, c)
 	default:
-		return b
+		return b, nil
 	}
 }
 
@@ -444,9 +448,14 @@ func appendTickMarker(b []byte, m TickMarker, prevTick *int) []byte {
 	return b
 }
 
-// appendDataChunk reproduces CDemoRecorder::Write's chunk header + payload.
-func appendDataChunk(b []byte, c DataChunk) []byte {
-	size := len(c.Payload)
+// appendDataChunk reproduces CDemoRecorder::Write's chunk header + payload,
+// re-compressing the decompressed Data with huffman.
+func appendDataChunk(b []byte, c DataChunk) ([]byte, error) {
+	payload, err := huffman.Compress(c.Data)
+	if err != nil {
+		return nil, fmt.Errorf("demo: compress chunk: %w", err)
+	}
+	size := len(payload)
 	head := byte((int(c.Type) & 0x3) << 5)
 	switch {
 	case size < 30:
@@ -456,5 +465,5 @@ func appendDataChunk(b []byte, c DataChunk) []byte {
 	default:
 		b = append(b, head|31, byte(size&0xff), byte(size>>8))
 	}
-	return append(b, c.Payload...)
+	return append(b, payload...), nil
 }

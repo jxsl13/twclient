@@ -19,9 +19,9 @@ func ExampleFile_WriteTo() {
 		},
 		Chunks: []demo.Chunk{
 			demo.TickMarker{Tick: 10, Keyframe: true},
-			demo.DataChunk{Type: demo.ChunkTypeSnapshot, Payload: []byte{0x01, 0x02}},
+			demo.DataChunk{Type: demo.ChunkTypeSnapshot, Data: []byte{0x01, 0x02}},
 			demo.TickMarker{Tick: 11},
-			demo.DataChunk{Type: demo.ChunkTypeMessage, Payload: []byte{0x03}},
+			demo.DataChunk{Type: demo.ChunkTypeMessage, Data: []byte{0x03}},
 		},
 	}
 
@@ -42,7 +42,7 @@ func ExampleDecoder() {
 		Header: demo.Header{Version: demo.Version, MapName: "Tutorial"},
 		Chunks: []demo.Chunk{
 			demo.TickMarker{Tick: 5, Keyframe: true},
-			demo.DataChunk{Type: demo.ChunkTypeDelta, Payload: []byte{0xaa}},
+			demo.DataChunk{Type: demo.ChunkTypeDelta, Data: []byte{0xaa}},
 			demo.TickMarker{Tick: 6},
 		},
 	}
@@ -60,7 +60,7 @@ func ExampleDecoder() {
 		case demo.TickMarker:
 			fmt.Printf("tick %d keyframe=%t\n", c.Tick, c.Keyframe)
 		case demo.DataChunk:
-			fmt.Printf("data %s %d bytes\n", c.Type, len(c.Payload))
+			fmt.Printf("data %s %d bytes\n", c.Type, len(c.Data))
 		}
 	}
 	// Output:

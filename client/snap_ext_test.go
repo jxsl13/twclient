@@ -10,7 +10,7 @@ import (
 // uuidToFields is the inverse of uuidFromFields, for building marker items.
 func uuidToFields(u [16]byte) []int {
 	f := make([]int, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f[i] = int(int32(binary.BigEndian.Uint32(u[i*4:])))
 	}
 	return f

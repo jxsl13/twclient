@@ -72,23 +72,19 @@ func TestCallbackConcurrency(t *testing.T) {
 	var fired int64
 	var wg sync.WaitGroup
 
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			unreg := On(c, func(*Client, packet.EventChat) {
 				atomic.AddInt64(&fired, 1)
 			})
 			c.callbacks.dispatch(c, packet.EventChat{})
 			unreg()
-		}()
+		})
 	}
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			c.callbacks.dispatch(c, packet.EventChat{})
-		}()
+		})
 	}
 	wg.Wait()
 	// No assertion on exact count (interleaving-dependent); the point is the

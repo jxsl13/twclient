@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/binary"
+	"maps"
 	"time"
 
 	"github.com/jxsl13/twclient/net6"
@@ -179,7 +180,7 @@ const exPlayerFlagAfk = 1 << 0
 // (big-endian uint32 per int, matching DDNet's CUuid packing).
 func uuidFromFields(f []int) [16]byte {
 	var u [16]byte
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		binary.BigEndian.PutUint32(u[i*4:], uint32(int32(f[i])))
 	}
 	return u
@@ -189,9 +190,7 @@ func uuidFromFields(f []int) [16]byte {
 // map. Caller must hold the Client mutex.
 func (ss *SnapStorage) charactersCopy() map[int]CharacterState {
 	out := make(map[int]CharacterState, len(ss.characters))
-	for id, c := range ss.characters {
-		out[id] = c
-	}
+	maps.Copy(out, ss.characters)
 	return out
 }
 

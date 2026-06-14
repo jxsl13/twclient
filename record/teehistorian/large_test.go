@@ -25,7 +25,6 @@ func largeFixtures(t testing.TB) []string {
 // at a time so peak memory stays at a single ~25MB file's working set.
 func TestRoundTripLarge(t *testing.T) {
 	for _, path := range largeFixtures(t) {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			orig, err := os.ReadFile(path)
 			if err != nil {
@@ -60,7 +59,6 @@ func TestRoundTripLarge(t *testing.T) {
 // fixpoint), one file at a time to bound memory.
 func TestReparseLarge(t *testing.T) {
 	for _, path := range largeFixtures(t) {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			orig, err := os.ReadFile(path)
 			if err != nil {
@@ -91,7 +89,6 @@ func TestReparseLarge(t *testing.T) {
 // yield ticks whenever the file has player records (V70 + dataset contract).
 func TestTicksLarge(t *testing.T) {
 	for _, path := range largeFixtures(t) {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			orig, err := os.ReadFile(path)
 			if err != nil {

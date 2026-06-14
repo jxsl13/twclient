@@ -133,7 +133,7 @@ func (d *Decoder) decodeChunk(b byte) (Chunk, error) {
 	if _, err := io.ReadFull(d.r, payload); err != nil {
 		return nil, fmt.Errorf("demo: chunk payload: %w", err)
 	}
-	return DataChunk{Type: typ, Payload: payload}, nil
+	return decompressDataChunk(typ, payload)
 }
 
 // Encoder writes a demo file incrementally to an io.Writer: NewEncoder emits the
@@ -141,7 +141,6 @@ func (d *Decoder) decodeChunk(b byte) (Chunk, error) {
 // byte-identical to (*File).WriteTo.
 type Encoder struct {
 	w        io.Writer
-	version  uint8
 	prevTick int
 	buf      []byte // reused scratch for one chunk's wire bytes
 }
@@ -152,13 +151,17 @@ func NewEncoder(w io.Writer, h Header) (*Encoder, error) {
 	if _, err := w.Write(h.marshalPreamble()); err != nil {
 		return nil, err
 	}
-	return &Encoder{w: w, version: h.Version, prevTick: -1}, nil
+	return &Encoder{w: w, prevTick: -1}, nil
 }
 
 // Write appends one chunk's wire bytes to the underlying writer, reusing the
 // shared appendChunk encoding so output matches the in-memory path exactly.
 func (e *Encoder) Write(ch Chunk) error {
-	e.buf = appendChunk(e.buf[:0], ch, e.version, &e.prevTick)
-	_, err := e.w.Write(e.buf)
+	buf, err := appendChunk(e.buf[:0], ch, &e.prevTick)
+	if err != nil {
+		return err
+	}
+	e.buf = buf
+	_, err = e.w.Write(e.buf)
 	return err
 }

@@ -1,6 +1,8 @@
 package client
 
 import (
+	"maps"
+
 	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twclient/physics"
 )
@@ -95,7 +97,7 @@ func (w *PredictedWorld) advanceOthers(localCID, predTick int) {
 			continue
 		}
 		in := extrapolatedInput(w.seed[cid])
-		for i := 0; i < steps; i++ {
+		for range steps {
 			w.applyZoneTuning(core)
 			core.Step(in)
 		}
@@ -189,9 +191,7 @@ func (c *Client) reconcilePrediction() {
 	var zoneTun map[int]physics.Tuning
 	if mv != nil && len(c.tunings) > 0 {
 		zoneTun = make(map[int]physics.Tuning, len(c.tunings))
-		for z, t := range c.tunings {
-			zoneTun[z] = t
-		}
+		maps.Copy(zoneTun, c.tunings)
 	}
 	c.mu.Unlock()
 

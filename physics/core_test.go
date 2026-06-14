@@ -39,7 +39,7 @@ func TestGravityInAir(t *testing.T) {
 	// Velocity keeps accumulating gravity each tick (no terminal velocity
 	// until the 6000 clamp, far away).
 	c2 := NewCore(emptyCol(), Vec2{X: 100, Y: 100})
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		c2.Tick(Input{})
 		c2.Move()
 	}
@@ -52,7 +52,7 @@ func TestGroundAcceleratesToMaxSpeed(t *testing.T) {
 		t.Fatalf("expected tee to be grounded, pos=%v", c.Pos)
 	}
 	// Accel 2.0/tick from 0 reaches the 10.0 ground cap in 5 ticks.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		c.Tick(Input{Direction: 1})
 		approx(t, "VelX", c.Vel.X, float32(2*(i+1)), 1e-4)
 		c.Move()
@@ -121,7 +121,7 @@ func TestWallStopsHorizontalVelocity(t *testing.T) {
 	c.Vel.X = 10
 	// Drive right into the wall for several ticks.
 	hit := false
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		c.Step(Input{Direction: 1})
 		if c.Vel.X == 0 {
 			hit = true
@@ -141,7 +141,7 @@ func TestFallComesToRestOnFloor(t *testing.T) {
 	col := floorCol(10)
 	// Start above the floor.
 	c := NewCore(col, Vec2{X: 100, Y: float32(10*TileSize) - 200})
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		c.Step(Input{})
 	}
 	if c.Vel.Y != 0 {
@@ -160,7 +160,7 @@ func TestDeterministic(t *testing.T) {
 	run := func() (x, y int) {
 		c := standOn(floorCol(10), 10)
 		in := Input{Direction: 1, Jump: true, TargetX: 256}
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			// Toggle jump to allow edges.
 			in.Jump = i%4 == 0
 			c.Step(in)

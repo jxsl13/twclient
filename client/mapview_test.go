@@ -81,7 +81,7 @@ func TestMapViewWindow(t *testing.T) {
 	}
 	// Row layout: rows ty=-1,0,1 ; cols tx=0,1,2.
 	// Top row (ty=-1) all OOB → solid; bottom row (ty=1) all OOB → solid.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if win[i] != ClassSolid {
 			t.Errorf("top row cell %d should be solid (OOB), got %d", i, win[i])
 		}

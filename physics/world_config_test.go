@@ -54,7 +54,7 @@ func TestWeaponsGatedByConfig(t *testing.T) {
 		c := NewCore(floorCol(5), Vec2{X: 100, Y: float32(5*TileSize) - 30})
 		c.SetWorldConfig(cfg)
 		c.Tick(fire)
-		for i := 0; i < 6; i++ {
+		for range 6 {
 			c.Tick(Input{})
 		}
 		return c.Vel.Y

@@ -248,7 +248,7 @@ func readVarint(r io.ByteReader) (int, error) {
 		return value ^ -sign, nil
 	}
 	const maxCont = 4 // continuation bytes (MaxVarintLen32 - 1)
-	for i := 0; i < maxCont; i++ {
+	for i := range maxCont {
 		b, err = r.ReadByte()
 		if err != nil {
 			if errors.Is(err, io.EOF) {

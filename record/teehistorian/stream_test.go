@@ -34,7 +34,6 @@ func streamFixturePaths(t *testing.T) []string {
 // on the streaming path). Files are processed one at a time to bound memory.
 func TestStreamEqualsNonStream(t *testing.T) {
 	for _, path := range streamFixturePaths(t) {
-		path := path
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			orig, err := os.ReadFile(path)
 			if err != nil {

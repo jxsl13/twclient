@@ -1,5 +1,7 @@
 package teehistorian
 
+import "maps"
+
 import "github.com/jxsl13/twclient/packet"
 
 // PlayerState is a player's absolute position at a tick (world units).
@@ -22,13 +24,9 @@ func (f *File) Ticks(yield func(tick int, players map[int]PlayerState, inputs ma
 
 	emit := func() bool {
 		ps := make(map[int]PlayerState, len(pos))
-		for k, v := range pos {
-			ps[k] = v
-		}
+		maps.Copy(ps, pos)
 		in := make(map[int]packet.PlayerInput, len(input))
-		for k, v := range input {
-			in[k] = v
-		}
+		maps.Copy(in, input)
 		return yield(tick, ps, in)
 	}
 

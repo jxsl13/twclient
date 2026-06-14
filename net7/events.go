@@ -271,7 +271,7 @@ func (s *Session) processClientInfo(data []byte) {
 	}
 	// 6 skin-part names; keep the first (body).
 	var skin string
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		part, err := u.NextString()
 		if err != nil {
 			return

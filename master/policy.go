@@ -62,7 +62,7 @@ func (r *roundRobin) Fetch(ctx context.Context, masters []string, try func(conte
 	}
 	start := int((r.cursor.Add(1) - 1) % uint64(n))
 	var last error
-	for i := 0; i < n; i++ {
+	for i := range n {
 		entries, err := try(ctx, masters[(start+i)%n])
 		if err == nil {
 			return entries, nil

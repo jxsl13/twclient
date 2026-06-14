@@ -254,11 +254,11 @@ func parseHeader(data []byte) (Header, int, error) {
 // nulString returns the NUL-terminated string at the start of b; the terminator
 // must be present (DDNet ValidateHeader requires mem_has_null).
 func nulString(b []byte) (string, error) {
-	i := bytes.IndexByte(b, 0)
-	if i < 0 {
+	before, _, ok := bytes.Cut(b, []byte{0})
+	if !ok {
 		return "", errors.New("missing NUL terminator")
 	}
-	return string(b[:i]), nil
+	return string(before), nil
 }
 
 // splitChunk reads one physical chunk header and payload off the front of body.
@@ -303,13 +303,13 @@ func decodePhysicalChunk(typ, numItems int, payload []byte) ([]Chunk, error) {
 
 	chunks := make([]Chunk, 0, numItems)
 	prev := make([]int32, fpi)
-	for i := 0; i < numItems; i++ {
+	for i := range numItems {
 		raw := ints[i*fpi : (i+1)*fpi]
 		cur := make([]int32, fpi)
 		if i == 0 {
 			copy(cur, raw)
 		} else {
-			for j := 0; j < fpi; j++ {
+			for j := range fpi {
 				cur[j] = int32(uint32(prev[j]) + uint32(raw[j]))
 			}
 		}

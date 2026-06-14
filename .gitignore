@@ -4,6 +4,7 @@
 go.sum
 *.log
 client.test
+.DS_Store
 
 # large bot-generated teehistorian recordings — round-trip baseline, NOT committed (see teehistorian large_test.go)
 testdata/teehistorian-large/
