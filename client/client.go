@@ -46,27 +46,33 @@ var (
 type Client struct {
 	sess Session
 
-	address          string
-	name             string
-	clan             string
-	skin             string
-	country          int
-	password         string                    // server password, sent in handshake (V42); empty = unprotected
-	timeoutCode      string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
-	rconPassword     string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
-	rconAuthed       bool                      // current rcon auth state (V44), protected by mu
-	caps             packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
-	version          packet.Version
-	mapCache         *packet.MapCache
-	snapStorageSize  int // packet.SnapStorage window for the session reader; 0 = default (V53)
-	predInputRingLen int // prediction input ring size; 0 = default (V54)
-	eventChanSize    int // session reader event-channel buffer; 0 = default (V54)
-	readBufferSize   int // UDP receive-buffer size; 0 = default (V54)
-	log              *slog.Logger
+	address            string
+	name               string
+	clan               string
+	skin               string
+	country            int
+	password           string                    // server password, sent in handshake (V42); empty = unprotected
+	timeoutCode        string                    // DDNet timeout-code for tee reclaim (V32); stable across reconnect
+	rconPassword       string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
+	rconAuthed         bool                      // current rcon auth state (V44), protected by mu
+	caps               packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
+	version            packet.Version
+	mapCache           *packet.MapCache
+	snapStorageSize    int // packet.SnapStorage window for the session reader; 0 = default (V53)
+	predInputRingLen   int // prediction input ring size; 0 = default (V54)
+	inputTimingRingLen int // CSmoothTime input-timing history ring; 0 = default (V54)
+	eventChanSize      int // session reader event-channel buffer; 0 = default (V54)
+	readBufferSize     int // UDP receive-buffer size; 0 = default (V54)
+	log                *slog.Logger
 
 	// snap state — protected by mu
 	mu   sync.RWMutex
 	snap SnapStorage
+
+	// in-session player registry (id → name/clan/team/score/present), protected
+	// by mu. Fed from EventPlayerJoin/Leave/ScoreChange/TeamSet/SkinChange in
+	// handleEvent; cleared on disconnect/reconnect (V98–V105).
+	players map[int]PlayerState
 
 	// event processing goroutine — cancelled by Close or parent context
 	readerCancel context.CancelFunc
@@ -196,6 +202,15 @@ func WithPredInputRingSize(n int) Option {
 	return func(c *Client) { c.predInputRingLen = n }
 }
 
+// WithInputTimingRingSize sets the number of recent predicted-tick sends kept
+// for INPUTTIMING feedback lookup in the smooth predicted clock (V54). This is
+// the TW CSmoothTime input-timing history ring (default 200), DISTINCT from
+// WithPredInputRingSize (the predicted-world re-sim input history). The default
+// is kept when unset or zero; a too-small value is clamped up to a safe floor.
+func WithInputTimingRingSize(n int) Option {
+	return func(c *Client) { c.inputTimingRingLen = n }
+}
+
 // WithEventChanSize sets the buffered capacity of the session reader's event
 // channel (V54). The default (128) is kept when unset or zero. A larger buffer
 // absorbs bigger event bursts before the event loop drains them.
@@ -298,6 +313,8 @@ func New(address string, opts ...Option) *Client {
 	}
 	// Size the prediction input ring (clamped; default when unset, V54).
 	c.predInputs.configure(c.predInputRingLen)
+	// Size the input-timing history ring (clamped; default when unset, V54).
+	c.predTime.configure(c.inputTimingRingLen)
 	return c
 }
 
@@ -331,6 +348,19 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		loginOpts = append(loginOpts, packet.WithLoginPassword(c.password))
 	}
 	if err := sess.Login(ctx, c.name, c.clan, loginOpts...); err != nil {
+		// A server rejection during login arrives as a CTRL_CLOSE (V109, B10):
+		// classify the reason and surface it as ErrServerClosed instead of an
+		// opaque timeout, so callers (and auto-reconnect, V34/V35) can react. The
+		// session returns the *packet.ServerClosedError from Login; errors.AsType
+		// recovers it even if a layer wraps it with %w (V117).
+		if sce, ok := errors.AsType[*packet.ServerClosedError](err); ok {
+			reason := NewDisconnectReason(sce.Reason)
+			c.errMu.Lock()
+			c.lastDisc = reason
+			c.errMu.Unlock()
+			c.setErr(ErrServerClosed)
+			return fmt.Errorf("client: login rejected (%s): %w", reason.Kind, ErrServerClosed)
+		}
 		return fmt.Errorf("client: login: %w", err)
 	}
 
@@ -338,12 +368,22 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		c.log.Warn("map download failed, continuing without map", "error", err)
 	}
 
-	// Reset snap state for the new connection
+	// Reset snap state for the new connection. The decoder + is07 select the
+	// protocol-neutral snapshot decode path (V112): net7 on 0.7, net6 otherwise;
+	// is07 also guards the 0.6-only ObjClientInfo names path (V115).
+	is07 := c.version == packet.Version07
+	decode := net6.DecodeSnap
+	if is07 {
+		decode = net7.DecodeSnap
+	}
 	c.mu.Lock()
 	c.snap = SnapStorage{
 		lastSnapTime: time.Now(),
 		localCID:     -1,
+		decode:       decode,
+		is07:         is07,
 	}
+	c.players = nil // registry starts empty each (re)connect (V102)
 	// Capabilities are sent before MAP_CHANGE and captured synchronously during
 	// Login (before the event reader exists), so seed the client copy from the
 	// session here; later EventServerCapabilities updates refresh it (V47).
@@ -608,6 +648,12 @@ func (c *Client) handleEvent(ev packet.Event) {
 	case packet.EventSnapshot:
 		var derived []packet.Event
 		c.mu.Lock()
+		// Local client id from the session when the protocol carries it outside
+		// the snapshot (0.7 Sv_ClientInfo, T140); -1 on 0.6 leaves the in-snapshot
+		// Player.Local derivation in updateFromSnap untouched (V115).
+		if lid := c.sess.LocalID(); lid >= 0 {
+			c.snap.localCID = lid
+		}
 		c.snap.processSnapshot(e.Snap)
 		if e.Snap != nil {
 			derived = c.snap.deriveEvents()
@@ -648,6 +694,26 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.mu.Lock()
 		c.caps = e.Caps
 		c.mu.Unlock()
+	case packet.EventPlayerJoin:
+		c.mu.Lock()
+		c.upsertPlayer(e)
+		c.mu.Unlock()
+	case packet.EventPlayerLeave:
+		c.mu.Lock()
+		c.removePlayer(e.ClientID)
+		c.mu.Unlock()
+	case packet.EventScoreChange:
+		c.mu.Lock()
+		c.setPlayerScore(e.ClientID, e.Score)
+		c.mu.Unlock()
+	case packet.EventTeamSet:
+		c.mu.Lock()
+		c.setPlayerTeam(e.ClientID, e.Team)
+		c.mu.Unlock()
+	case packet.EventSkinChange:
+		c.mu.Lock()
+		c.setPlayerSkin(e.ClientID, e.Skin)
+		c.mu.Unlock()
 	case packet.EventRconAuth:
 		c.mu.Lock()
 		c.rconAuthed = e.Authed
@@ -661,6 +727,7 @@ func (c *Client) handleEvent(ev packet.Event) {
 		// rejected until re-auth (V44). autoRconLogin re-auths on reconnect (V45).
 		c.mu.Lock()
 		c.rconAuthed = false
+		c.clearPlayers() // registry does not survive a disconnect (V102)
 		c.mu.Unlock()
 		c.log.Warn("server sent CLOSE", "reason", e.Reason, "kind", reason.Kind.String())
 		c.setErr(ErrServerClosed)

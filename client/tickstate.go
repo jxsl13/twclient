@@ -1,6 +1,8 @@
 package client
 
 import (
+	"maps"
+
 	"github.com/jxsl13/twclient/net6"
 	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twclient/physics"
@@ -44,6 +46,11 @@ type TickState struct {
 	GameInfo GameInfoState
 	RaceTime RaceTime
 
+	// Roster is the in-session player registry for this tick (id → name/clan/
+	// team/score/present), so a UI renders a scoreboard without touching
+	// snapshots (V98). Empty until ClientInfo/score events arrive.
+	Roster map[int]PlayerState
+
 	Events []packet.Event // server events since the previous tick
 }
 
@@ -59,6 +66,11 @@ func (c *Client) buildTickState() TickState {
 	raceTime := c.snap.raceTimeState()
 	snap := c.snap.lastSnap
 	defaultTun := c.predTun
+	var roster map[int]PlayerState
+	if len(c.players) > 0 {
+		roster = make(map[int]PlayerState, len(c.players))
+		maps.Copy(roster, c.players)
+	}
 	c.mu.RUnlock()
 
 	var lasers []LaserState
@@ -109,6 +121,7 @@ func (c *Client) buildTickState() TickState {
 		SelfTuneZone: selfZone,
 		GameInfo:     gameInfo,
 		RaceTime:     raceTime,
+		Roster:       roster,
 		Events:       c.drainTickEvents(),
 	}
 }

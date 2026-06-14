@@ -462,15 +462,22 @@ func (ss *SnapStorage) deriveGame(evs []packet.Event) []packet.Event {
 
 	// Roster: ObjClientInfo appearing/disappearing => player join/leave. On 0.6
 	// this is the only join/leave source; on 0.7 the reader emits messages and
-	// these snapshot objects are absent (V15a). Names/skins are not decoded
-	// from the snapshot here, so only ClientID is reported.
+	// these snapshot objects are absent (V15a). The name/clan/country/skin are
+	// int-packed in the ObjClientInfo item and decoded here (T114, V100).
 	curClientIDs := make(map[int]struct{})
 	for _, it := range ss.lastSnap.Items {
 		if it.TypeID == net6.ObjClientInfo {
 			curClientIDs[it.ID] = struct{}{}
 			if ss.rosterInit {
 				if _, seen := ss.prevClientIDs[it.ID]; !seen {
-					evs = append(evs, packet.EventPlayerJoin{ClientID: it.ID})
+					ci := net6.DecodeClientInfo(it.Fields)
+					evs = append(evs, packet.EventPlayerJoin{
+						ClientID: it.ID,
+						Name:     ci.Name,
+						Clan:     ci.Clan,
+						Country:  ci.Country,
+						Skin:     ci.Skin,
+					})
 				}
 			}
 		}

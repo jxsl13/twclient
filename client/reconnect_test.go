@@ -1,6 +1,8 @@
 package client
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -54,5 +56,35 @@ func TestHandleEventClassifiesDisconnect(t *testing.T) {
 	}
 	if d.BanDuration != 10*time.Minute {
 		t.Errorf("ban duration = %v, want 10m", d.BanDuration)
+	}
+}
+
+// V117: the login-rejection classifier (Client.Connect) inspects the error with
+// the errors library, NOT a bare type assertion, so a *packet.ServerClosedError
+// is recovered even when a layer wraps it with %w. A plain assertion would miss
+// the wrapped form — this guards that the classifier keeps working if Login (or
+// any intermediate) wraps the close error.
+func TestServerClosedErrorClassifiedWhenWrapped(t *testing.T) {
+	base := &packet.ServerClosedError{Reason: "Wrong password"}
+
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"bare", base},
+		{"wrapped", fmt.Errorf("session06: login: %w", base)},
+		{"double-wrapped", fmt.Errorf("client: login: %w", fmt.Errorf("inner: %w", base))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// the exact pattern Connect uses (V117): errors.AsType recovers the
+			// close error through any %w wrapping; a bare assertion would not.
+			sce, ok := errors.AsType[*packet.ServerClosedError](tc.err)
+			if !ok {
+				t.Fatalf("AsType did not recover *ServerClosedError from %v", tc.err)
+			}
+			if got := NewDisconnectReason(sce.Reason); got.Kind != DisconnectKindWrongPassword {
+				t.Fatalf("classified kind = %v, want WrongPassword", got.Kind)
+			}
+		})
 	}
 }
