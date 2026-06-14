@@ -486,8 +486,7 @@ func (s *Session) parsePayload(resp []byte, buf *[]byte) (Header, []byte, error)
 		// payload is transient and copied out by consumers (V52). s.huff is
 		// only read (immutable dict), so concurrent DecompressTo calls with
 		// distinct buffers are safe (V75).
-		// TODO: migrate to DecompressTo((*buf)[:0], payload)
-		d, err := s.huff.Decompress(payload)
+		d, err := s.huff.DecompressTo((*buf)[:0], payload)
 		if err == nil {
 			*buf = d
 			payload = d
