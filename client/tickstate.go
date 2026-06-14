@@ -3,7 +3,6 @@ package client
 import (
 	"maps"
 
-	"github.com/jxsl13/twclient/net6"
 	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twclient/physics"
 )
@@ -64,37 +63,27 @@ func (c *Client) buildTickState() TickState {
 	localID := c.snap.localCID
 	gameInfo := c.snap.gameInfo
 	raceTime := c.snap.raceTimeState()
-	snap := c.snap.lastSnap
 	defaultTun := c.predTun
+	// Visible entities from the shared, protocol-neutral snapshot objects (V112)
+	// — no net6/net7 object ids in the consumer.
+	var lasers []LaserState
+	var pickups []PickupState
+	var flags []FlagState
+	for _, l := range c.snap.objs.Lasers {
+		lasers = append(lasers, LaserState{X: l.X, Y: l.Y, FromX: l.FromX, FromY: l.FromY, StartTick: l.StartTick})
+	}
+	for _, p := range c.snap.objs.Pickups {
+		pickups = append(pickups, PickupState{X: p.X, Y: p.Y, Type: p.Type, Subtype: p.Subtype})
+	}
+	for _, fl := range c.snap.objs.Flags {
+		flags = append(flags, FlagState{X: fl.X, Y: fl.Y, Team: fl.Team})
+	}
 	var roster map[int]PlayerState
 	if len(c.players) > 0 {
 		roster = make(map[int]PlayerState, len(c.players))
 		maps.Copy(roster, c.players)
 	}
 	c.mu.RUnlock()
-
-	var lasers []LaserState
-	var pickups []PickupState
-	var flags []FlagState
-	if snap != nil {
-		for _, it := range snap.Items {
-			f := it.Fields
-			switch it.TypeID {
-			case net6.ObjLaser:
-				if len(f) >= net6.SizeLaser {
-					lasers = append(lasers, LaserState{X: f[0], Y: f[1], FromX: f[2], FromY: f[3], StartTick: f[4]})
-				}
-			case net6.ObjPickup:
-				if len(f) >= net6.SizePickup {
-					pickups = append(pickups, PickupState{X: f[0], Y: f[1], Type: f[2], Subtype: f[3]})
-				}
-			case net6.ObjFlag:
-				if len(f) >= net6.SizeFlag {
-					flags = append(flags, FlagState{X: f[0], Y: f[1], Team: f[2]})
-				}
-			}
-		}
-	}
 
 	// Predicted accessors take their own locks — call them outside the lock above.
 	players := c.PredictedCharacters()

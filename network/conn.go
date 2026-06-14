@@ -3,14 +3,26 @@ package network
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"time"
 
 	"github.com/jxsl13/twclient/packet"
 )
+
+// traceEnabled hex-dumps every send/recv to stderr when TW_TRACE is set in the
+// environment. Diagnostic only (B11/T130) — zero cost when unset.
+var traceEnabled = os.Getenv("TW_TRACE") != ""
+
+func trace(dir string, data []byte) {
+	if traceEnabled {
+		fmt.Fprintf(os.Stderr, "[tw-trace] %s %3dB %s\n", dir, len(data), hex.EncodeToString(data))
+	}
+}
 
 // DefaultReadTimeout is the read/write deadline used when none is set via
 // WithReadTimeout/WithWriteTimeout. It matches DDNet's conn_timeout default
@@ -117,6 +129,7 @@ func (c *Conn) SendRaw(data []byte) error {
 			return err
 		}
 	}
+	trace("send", data)
 	_, err := c.conn.Write(data)
 	return err
 }
@@ -149,6 +162,7 @@ func (c *Conn) RecvContext(ctx context.Context) ([]byte, error) {
 		}
 		return nil, err
 	}
+	trace("recv", buf[:n])
 	return buf[:n], nil
 }
 

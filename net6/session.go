@@ -115,6 +115,13 @@ func (s *Session) Capabilities() packet.ServerCapabilities {
 	return s.caps
 }
 
+// LocalID returns the local client id. On 0.6 the local player is marked inside
+// the snapshot (ObjPlayerInfo m_Local), so the session does not track it
+// separately — the client resolves it from the decoded Player.Local (V115).
+// Always -1 here (no session-level local id on 0.6); net7 captures it from
+// Sv_ClientInfo (T140).
+func (s *Session) LocalID() int { return -1 }
+
 // NewSession creates a new 0.6 session against the given address.
 // By default, logging is discarded and each session has its own map cache.
 // Use WithLogger and WithMapCache to customize.
@@ -518,6 +525,12 @@ func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) e
 		if perr != nil || payload == nil {
 			continue
 		}
+		if hdr.Flags.Control {
+			if closed, cerr := serverClosed(payload); closed { // fail fast on rejection (V109, B10)
+				return cerr
+			}
+			continue
+		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
 		// DDNet sends its capabilities (NETMSG_EX) before MAP_CHANGE; capture it
 		// here since the background reader is not running yet (V47).
@@ -549,11 +562,30 @@ func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) er
 		if perr != nil || payload == nil {
 			continue
 		}
+		if hdr.Flags.Control {
+			if closed, cerr := serverClosed(payload); closed { // fail fast on rejection (V109, B10)
+				return cerr
+			}
+			continue
+		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
 		if packet.ContainsSysMsg(payload, MsgSysConReady, Split) {
 			return nil
 		}
 	}
+}
+
+// serverClosed reports whether a control payload is a CTRL_CLOSE and, if so, the
+// classified error carrying the server's reason text (V109, B10).
+func serverClosed(payload []byte) (bool, error) {
+	if len(payload) > 0 && payload[0] == MsgCtrlClose {
+		reason := ""
+		if len(payload) > 1 {
+			reason = string(payload[1:])
+		}
+		return true, &packet.ServerClosedError{Reason: reason}
+	}
+	return false, nil
 }
 
 // MapName returns the current map name (from the last MAP_CHANGE).

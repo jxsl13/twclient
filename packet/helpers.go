@@ -232,8 +232,9 @@ func ParseMapChangePayload(data []byte) (MapInfo, error) {
 		return MapInfo{}, fmt.Errorf("map_change: size: %w", err)
 	}
 	info := MapInfo{Name: name, CRC: crc, Size: size}
-	// DDNet extensions: chunksPerRequest, chunkSize, sha256, url
-	if _, err := u.NextInt(); err == nil { // chunksPerRequest
+	// 0.7 / DDNet extensions: chunksPerRequest, chunkSize, sha256, url
+	if perReq, err := u.NextInt(); err == nil { // chunksPerRequest (sv_map_window)
+		info.NumChunksPerRequest = perReq
 		if _, err := u.NextInt(); err == nil { // chunkSize
 			if raw, err := u.NextRaw(32); err == nil {
 				copy(info.Sha256[:], raw)

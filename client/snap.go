@@ -69,36 +69,6 @@ type CharacterState struct {
 	AttackTick   int
 }
 
-func characterFromFields(fields []int) CharacterState {
-	if len(fields) < net6.SizeCharacter {
-		return CharacterState{}
-	}
-	return CharacterState{
-		Tick:         fields[0],
-		X:            fields[1],
-		Y:            fields[2],
-		VelX:         fields[3],
-		VelY:         fields[4],
-		Angle:        fields[5],
-		Direction:    fields[6],
-		Jumped:       fields[7],
-		HookedPlayer: fields[8],
-		HookState:    fields[9],
-		HookTick:     fields[10],
-		HookX:        fields[11],
-		HookY:        fields[12],
-		HookDx:       fields[13],
-		HookDy:       fields[14],
-		PlayerFlags:  fields[15],
-		Health:       fields[16],
-		Armor:        fields[17],
-		AmmoCount:    fields[18],
-		Weapon:       fields[19],
-		Emote:        fields[20],
-		AttackTick:   fields[21],
-	}
-}
-
 // SnapStorage tracks game state extracted from parsed snapshots.
 // It is embedded in Client and accessed under Client.mu.
 // Delta decompression is handled by the session; SnapStorage only
@@ -113,9 +83,17 @@ type SnapStorage struct {
 	// keyed by client ID. Snap-derived events diff these (V12).
 	characters     map[int]CharacterState
 	prevCharacters map[int]CharacterState
-	// lastSnap is the most recently processed snapshot, used by deriveEvents
-	// to read transient event-objects (explosions, deaths, projectiles, …).
+	// lastSnap is the most recently processed RAW snapshot (kept for the DDNet
+	// ext-object path, which is UUID-keyed and not in the shared repr).
 	lastSnap *packet.Snapshot
+	// objs is the decoded, protocol-neutral content of lastSnap (V112). All
+	// snap-derived state/events read THIS, not net6/net7 object ids. decode is
+	// the version-appropriate decoder (net6/net7 DecodeSnap), set by the client;
+	// nil defaults to net6 (0.6). is07 guards the 0.6-only ObjClientInfo names
+	// path (net6 id 11 == net7 PlayerInfo id, V115).
+	objs   packet.SnapObjects
+	decode func(*packet.Snapshot) packet.SnapObjects
+	is07   bool
 	// prevProjectiles/prevLasers hold the entity IDs seen last snapshot so a
 	// newly appearing projectile/laser can be reported as "fired" (V14).
 	prevProjectiles map[int]struct{}
@@ -130,6 +108,7 @@ type SnapStorage struct {
 	prevGameState  int
 	gameStateInit  bool
 	prevScores     map[int]int
+	prevTeams      map[int]int // 0.6 ObjPlayerInfo m_Team, for EventTeamSet diff (T122)
 	prevFlagRed    int
 	prevFlagBlue   int
 	flagInit       bool
@@ -138,6 +117,7 @@ type SnapStorage struct {
 	// roster: ObjClientInfo ids seen last snapshot, for join/leave on 0.6
 	// (the 0.7 reader emits these as messages instead, V15a).
 	prevClientIDs map[int]struct{}
+	prevSkins     map[int][6]int // 0.6 ObjClientInfo skin ints, for EventSkinChange diff (T123)
 	rosterInit    bool
 
 	// previous DDNet ext-object state per client, for change-triggered events
@@ -428,46 +408,71 @@ func (ss *SnapStorage) deriveGame(evs []packet.Event) []packet.Event {
 	ss.prevGameState = ss.gameInfo.GameStateFlags
 	ss.gameStateInit = true
 
-	// Per-player score changes.
+	// Per-player score + team changes (0.6 ObjPlayerInfo m_Team idx 2, m_Score
+	// idx 3). 0.7 sends team via Sv_Team (net7), so this is the 0.6 team feed
+	// (T122) and keeps the change-only semantics of EventScoreChange.
 	curScores := make(map[int]int)
-	for _, it := range ss.lastSnap.Items {
-		if it.TypeID == net6.ObjPlayerInfo && len(it.Fields) >= net6.SizePlayerInfo {
-			cid := it.Fields[1]
-			score := it.Fields[3]
-			curScores[cid] = score
-			if prev, ok := ss.prevScores[cid]; ok && prev != score {
-				evs = append(evs, packet.EventScoreChange{ClientID: cid, Score: score})
-			}
+	curTeams := make(map[int]int)
+	for cid, p := range ss.objs.Players {
+		curScores[cid] = p.Score
+		curTeams[cid] = p.Team
+		if prev, ok := ss.prevScores[cid]; ok && prev != p.Score {
+			evs = append(evs, packet.EventScoreChange{ClientID: cid, Score: p.Score})
+		}
+		if prev, ok := ss.prevTeams[cid]; ok && prev != p.Team {
+			evs = append(evs, packet.EventTeamSet{ClientID: cid, Team: p.Team})
 		}
 	}
 	ss.prevScores = curScores
+	ss.prevTeams = curTeams
 
 	// Flag carriers (CTF grab/drop/capture) from GameData.
-	for _, it := range ss.lastSnap.Items {
-		if it.TypeID == net6.ObjGameData && len(it.Fields) >= net6.SizeGameData {
-			red, blue := it.Fields[2], it.Fields[3]
-			if ss.flagInit {
-				if red != ss.prevFlagRed {
-					evs = append(evs, packet.EventFlag{Team: 0, CarrierID: red})
-				}
-				if blue != ss.prevFlagBlue {
-					evs = append(evs, packet.EventFlag{Team: 1, CarrierID: blue})
-				}
+	if ss.objs.HasGameData {
+		red, blue := ss.objs.GameData.FlagCarrierRed, ss.objs.GameData.FlagCarrierBlue
+		if ss.flagInit {
+			if red != ss.prevFlagRed {
+				evs = append(evs, packet.EventFlag{Team: 0, CarrierID: red})
 			}
-			ss.prevFlagRed, ss.prevFlagBlue = red, blue
-			ss.flagInit = true
-			break
+			if blue != ss.prevFlagBlue {
+				evs = append(evs, packet.EventFlag{Team: 1, CarrierID: blue})
+			}
 		}
+		ss.prevFlagRed, ss.prevFlagBlue = red, blue
+		ss.flagInit = true
 	}
 
-	// Roster: ObjClientInfo appearing/disappearing => player join/leave. On 0.6
-	// this is the only join/leave source; on 0.7 the reader emits messages and
-	// these snapshot objects are absent (V15a). The name/clan/country/skin are
-	// int-packed in the ObjClientInfo item and decoded here (T114, V100).
+	// Roster: ObjClientInfo appearing/disappearing => player join/leave. This is
+	// a 0.6-ONLY snapshot path (names): on 0.7 the reader emits Sv_ClientInfo
+	// messages instead, and net6.ObjClientInfo's id (11) collides with net7's
+	// ObjPlayerInfo, so it MUST NOT run on a 0.7 snapshot (V115). Names are the
+	// documented exception not carried in the shared SnapObjects.
+	if !ss.is07 {
+		evs = ss.deriveRoster06(evs)
+	}
+
+	// Spectated target change (local spectator).
+	if ss.objs.HasSpectator {
+		target := ss.objs.Spectator.SpectatorID
+		if ss.specInit && target != ss.prevSpecTarget {
+			evs = append(evs, packet.EventSpecTarget{ClientID: ss.localCID, TargetID: target})
+		}
+		ss.prevSpecTarget = target
+		ss.specInit = true
+	}
+
+	return evs
+}
+
+// deriveRoster06 is the 0.6-only ObjClientInfo join/leave/skin diff (names live
+// in the snapshot on 0.6, in messages on 0.7 — V115).
+func (ss *SnapStorage) deriveRoster06(evs []packet.Event) []packet.Event {
 	curClientIDs := make(map[int]struct{})
+	curSkins := make(map[int][6]int)
 	for _, it := range ss.lastSnap.Items {
 		if it.TypeID == net6.ObjClientInfo {
 			curClientIDs[it.ID] = struct{}{}
+			skin, _ := net6.SkinInts(it.Fields)
+			curSkins[it.ID] = skin
 			if ss.rosterInit {
 				if _, seen := ss.prevClientIDs[it.ID]; !seen {
 					ci := net6.DecodeClientInfo(it.Fields)
@@ -478,6 +483,9 @@ func (ss *SnapStorage) deriveGame(evs []packet.Event) []packet.Event {
 						Country:  ci.Country,
 						Skin:     ci.Skin,
 					})
+				} else if prev, ok := ss.prevSkins[it.ID]; ok && prev != skin {
+					// Same player, skin object changed — decode only on change (T123).
+					evs = append(evs, packet.EventSkinChange{ClientID: it.ID, Skin: net6.DecodeClientInfo(it.Fields).Skin})
 				}
 			}
 		}
@@ -490,21 +498,8 @@ func (ss *SnapStorage) deriveGame(evs []packet.Event) []packet.Event {
 		}
 	}
 	ss.prevClientIDs = curClientIDs
+	ss.prevSkins = curSkins
 	ss.rosterInit = true
-
-	// Spectated target change (local spectator).
-	for _, it := range ss.lastSnap.Items {
-		if it.TypeID == net6.ObjSpectatorInfo && len(it.Fields) >= net6.SizeSpectatorInfo {
-			target := it.Fields[0]
-			if ss.specInit && target != ss.prevSpecTarget {
-				evs = append(evs, packet.EventSpecTarget{ClientID: ss.localCID, TargetID: target})
-			}
-			ss.prevSpecTarget = target
-			ss.specInit = true
-			break
-		}
-	}
-
 	return evs
 }
 
@@ -516,58 +511,30 @@ func (ss *SnapStorage) deriveTransient(evs []packet.Event) []packet.Event {
 		return evs
 	}
 
+	// Transient one-tick events are decoded into the shared form already.
+	evs = append(evs, ss.objs.Events...)
+
 	curProj := make(map[int]struct{})
 	curLaser := make(map[int]struct{})
 	projData := make(map[int]packet.ProjectileState)
 
-	for _, it := range ss.lastSnap.Items {
-		f := it.Fields
-		switch it.TypeID {
-		case net6.ObjExplosion:
-			if len(f) >= net6.SizeExplosion {
-				evs = append(evs, packet.EventExplosion{X: f[0], Y: f[1]})
-			}
-		case net6.ObjSpawn:
-			if len(f) >= net6.SizeSpawn {
-				evs = append(evs, packet.EventSpawn{X: f[0], Y: f[1]})
-			}
-		case net6.ObjHammerHit:
-			if len(f) >= net6.SizeHammerHit {
-				evs = append(evs, packet.EventHammerHit{X: f[0], Y: f[1]})
-			}
-		case net6.ObjDeath:
-			if len(f) >= net6.SizeDeath {
-				evs = append(evs, packet.EventDeath{X: f[0], Y: f[1], ClientID: f[2]})
-			}
-		case net6.ObjSoundWorld:
-			if len(f) >= net6.SizeSoundWorld {
-				evs = append(evs, packet.EventSoundWorld{X: f[0], Y: f[1], SoundID: f[2]})
-			}
-		case net6.ObjDamageIndicator:
-			if len(f) >= net6.SizeDamageIndicator {
-				evs = append(evs, packet.EventDamageInd{X: f[0], Y: f[1], Angle: f[2]})
-			}
-		case net6.ObjProjectile:
-			curProj[it.ID] = struct{}{}
-			if len(f) >= net6.SizeProjectile {
-				projData[it.ID] = packet.ProjectileState{
-					ID: it.ID, X: f[0], Y: f[1], VelX: f[2], VelY: f[3],
-					Type: packet.Weapon(f[4]), StartTick: f[5],
-				}
-				if _, seen := ss.prevProjectiles[it.ID]; !seen {
-					evs = append(evs, packet.EventProjectileFired{
-						X: f[0], Y: f[1], VelX: f[2], VelY: f[3],
-						Type: packet.Weapon(f[4]), Owner: -1,
-					})
-				}
-			}
-		case net6.ObjLaser:
-			curLaser[it.ID] = struct{}{}
-			if _, seen := ss.prevLasers[it.ID]; !seen && len(f) >= net6.SizeLaser {
-				evs = append(evs, packet.EventLaserFired{
-					X: f[0], Y: f[1], FromX: f[2], FromY: f[3], Owner: -1,
-				})
-			}
+	for _, p := range ss.objs.Projectiles {
+		curProj[p.ID] = struct{}{}
+		// packet.Projectile and packet.ProjectileState are field-identical (one
+		// canonical projectile type) → direct conversion (S1016).
+		projData[p.ID] = packet.ProjectileState(p)
+		if _, seen := ss.prevProjectiles[p.ID]; !seen {
+			evs = append(evs, packet.EventProjectileFired{
+				X: p.X, Y: p.Y, VelX: p.VelX, VelY: p.VelY, Type: p.Type, Owner: -1,
+			})
+		}
+	}
+	for _, l := range ss.objs.Lasers {
+		curLaser[l.ID] = struct{}{}
+		if _, seen := ss.prevLasers[l.ID]; !seen {
+			evs = append(evs, packet.EventLaserFired{
+				X: l.X, Y: l.Y, FromX: l.FromX, FromY: l.FromY, Owner: -1,
+			})
 		}
 	}
 
@@ -610,51 +577,68 @@ func (ss *SnapStorage) processSnapshot(snap *packet.Snapshot) {
 	ss.lastTick = snap.Tick
 	ss.lastSnapTime = time.Now()
 	ss.lastSnap = snap
+	decode := ss.decode
+	if decode == nil {
+		decode = net6.DecodeSnap // 0.6 default (keeps existing behavior/tests)
+	}
+	ss.objs = decode(snap)
 	ss.updateFromSnap(snap)
 }
 
 const tickDuration = 20 * time.Millisecond
 
 func (ss *SnapStorage) updateFromSnap(snap *packet.Snapshot) {
-	for _, item := range snap.Items {
-		if item.TypeID == net6.ObjPlayerInfo && len(item.Fields) >= net6.SizePlayerInfo {
-			if item.Fields[0] != 0 {
-				ss.localCID = item.Fields[1]
-			}
+	o := &ss.objs
+
+	// Local player id: 0.6 marks it via Player.Local; 0.7 carries no snapshot
+	// Local bit (set separately from Sv_ClientInfo, T140) so this leaves it
+	// untouched on 0.7.
+	for _, p := range o.Players {
+		if p.Local {
+			ss.localCID = p.ClientID
 		}
 	}
-	for _, item := range snap.Items {
-		if item.TypeID == net6.ObjGameInfo && len(item.Fields) >= net6.SizeGameInfo {
-			ss.gameInfo = GameInfoState{
-				GameFlags:      item.Fields[0],
-				GameStateFlags: item.Fields[1],
-				RoundStartTick: item.Fields[2],
-				WarmupTimer:    item.Fields[3],
-				ScoreLimit:     item.Fields[4],
-				TimeLimit:      item.Fields[5],
-				RoundNum:       item.Fields[6],
-				RoundCurrent:   item.Fields[7],
-			}
-			ss.updateRaceTime(snap.Tick)
+
+	// Game info — only when the snapshot actually carried a GameInfo/GameData
+	// object (a gameinfo-less snap must NOT zero the retained state).
+	if o.HasGameInfo {
+		ss.gameInfo = GameInfoState{
+			GameFlags:      o.GameInfo.GameFlags,
+			GameStateFlags: o.GameInfo.GameStateFlags,
+			RoundStartTick: o.GameInfo.RoundStartTick,
+			WarmupTimer:    o.GameInfo.WarmupTimer,
+			ScoreLimit:     o.GameInfo.ScoreLimit,
+			TimeLimit:      o.GameInfo.TimeLimit,
+			RoundNum:       o.GameInfo.RoundNum,
+			RoundCurrent:   o.GameInfo.RoundCurrent,
 		}
+		ss.updateRaceTime(snap.Tick)
 	}
+
 	// Build the per-client character map for this snapshot, rotating the
 	// previous map into prevCharacters so snap-derived events can diff them.
-	// Double-buffer (V51): reuse the now-stale prevCharacters backing map
-	// (cleared + refilled) as the new current, so steady-state ticks allocate
-	// no map. Safe because callers receive COPIES via charactersCopy (V52) —
-	// ss.characters is never handed out by reference — and processSnapshot runs
-	// under the write lock while readers hold the read lock.
+	// Double-buffer (V51): reuse the now-stale prevCharacters backing map.
+	// packet.Character and CharacterState are field-identical (one canonical
+	// character type, V25) so the conversion is a direct cast.
 	newChars := ss.prevCharacters
 	if newChars == nil {
-		newChars = make(map[int]CharacterState, len(snap.Items))
+		newChars = make(map[int]CharacterState, len(o.Characters))
 	} else {
 		clear(newChars)
 	}
-	for _, item := range snap.Items {
-		if item.TypeID == net6.ObjCharacter {
-			newChars[item.ID] = characterFromFields(item.Fields)
+	for id, c := range o.Characters {
+		cs := CharacterState(c)
+		// On 0.7 the player flags (PLAYERFLAG_*) live in PlayerInfo, not the
+		// Character object (its 7th tail slot is m_TriggeredEvents), so the
+		// decoder left CharacterState.PlayerFlags at 0. Overlay it from the
+		// decoded Player so PlayerFlags is populated on BOTH protocols (V107/V115);
+		// 0.6 already carries it in the character (Player.PlayerFlags == 0 there).
+		if ss.is07 {
+			if p, ok := o.Players[id]; ok {
+				cs.PlayerFlags = p.PlayerFlags
+			}
 		}
+		newChars[id] = cs
 	}
 	ss.prevCharacters = ss.characters
 	ss.characters = newChars

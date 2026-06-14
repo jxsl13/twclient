@@ -1,0 +1,120 @@
+# CI pipeline (SPEC V117 / T145–T147).
+#
+# Three jobs, maximum parallelism:
+#   test   non-live suite (gates + go test -race), starts immediately.
+#   build  matrix (ddnet ∥ teeworlds7): builds each e2e server image FROM SOURCE
+#          (V116) with a shared gha layer cache + smoke-verifies it starts and
+#          accepts dbg_dummies (CONF_DEBUG build). Runs concurrently with `test`.
+#   e2e    live parity tests, needs [test, build] → runs only after both pass.
+#          Reuses the gha-cached layers (instant rebuild) and drives the client
+#          IN-NETWORK against both containers (V114/V116, mirrors `make e2e`).
+#
+# The cmd/ harness is a separate, gitignored module → not part of CI.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# Abort superseded runs: a new push/PR-update on the same ref cancels the
+# in-flight run for that ref (keeps the queue lean, no wasted minutes).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: non-live tests + gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Install lint/vuln tools
+        run: make tools
+      - name: Gates (vet, staticcheck, modernize-check, vuln, test + doccov)
+        run: make check
+      - name: Race detector
+        run: go test -race -timeout 10m ./...
+
+  build:
+    name: build+start ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [ddnet, teeworlds7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.service }} image (source, cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: e2e
+          file: e2e/${{ matrix.service }}.Dockerfile
+          load: true
+          tags: tw-e2e-${{ matrix.service }}:local
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Smoke-test (server starts + dbg_dummies accepted)
+        run: |
+          docker run -d --name smoke tw-e2e-${{ matrix.service }}:local
+          sleep 15
+          docker logs smoke || true
+          # CONF_DEBUG build MUST accept dbg_dummies (B15.5 / V116).
+          if docker logs smoke 2>&1 | grep -qi "No such command: dbg_dummies"; then
+            echo "::error::dbg_dummies rejected — image is not a CONF_DEBUG build (V116)"
+            exit 1
+          fi
+          # Container must still be running (did not crash, e.g. map load failure).
+          if [ "$(docker inspect -f '{{.State.Running}}' smoke)" != "true" ]; then
+            echo "::error::${{ matrix.service }} container is not running"
+            exit 1
+          fi
+          docker rm -f smoke
+
+  e2e:
+    name: live parity tests
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Rebuild both images from the warmed gha cache (cache hit → fast) and load
+      # them under the tags the compose file references, so `up` skips building.
+      - name: Load ddnet image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: e2e
+          file: e2e/ddnet.Dockerfile
+          load: true
+          tags: tw-e2e-ddnet:local
+          cache-from: type=gha,scope=ddnet
+      - name: Load teeworlds7 image (cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: e2e
+          file: e2e/teeworlds7.Dockerfile
+          load: true
+          tags: tw-e2e-teeworlds7:local
+          cache-from: type=gha,scope=teeworlds7
+      - name: Start harness
+        run: docker compose -f e2e/docker-compose.yml up -d
+      - name: Run live parity suite (in-network)
+        run: |
+          docker run --rm --network tw-e2e_default -v "$PWD":/src -w /src \
+            -e TW_E2E=1 \
+            -e TW_E2E_DDNET_06=ddnet:8303 \
+            -e TW_E2E_DDNET_07=ddnet:8303 \
+            -e TW_E2E_VANILLA_07=teeworlds7:8303 \
+            golang:1.26 go test -tags e2e -timeout 10m -run TestE2E ./e2e/ -v
+      - name: Teardown
+        if: always()
+        run: docker compose -f e2e/docker-compose.yml down

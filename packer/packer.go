@@ -33,6 +33,17 @@ func (u *Unpacker) Reset(data []byte) {
 	u.idx = 0
 }
 
+// ResetView resets the unpacker to read directly over data WITHOUT copying it
+// (unlike Reset, which keeps a private copy). The unpacker only ever reads, so
+// the view is equivalent — but the CALLER must not mutate data while the
+// unpacker (or any sub-slice it returned via NextRaw/Rest/RemainingData) is in
+// use, and any returned sub-slice ALIASES data (lifetime-couples to it). Use for
+// hot parse paths over a buffer the caller already owns and keeps stable.
+func (u *Unpacker) ResetView(data []byte) {
+	u.data = data
+	u.idx = 0
+}
+
 // Size returns the total buffer size.
 func (u *Unpacker) Size() int { return len(u.data) }
 

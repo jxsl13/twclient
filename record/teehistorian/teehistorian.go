@@ -57,12 +57,25 @@ type Header struct {
 }
 
 // File is a parsed teehistorian file.
+//
+// OWNERSHIP (V84d): a File returned by Parse RETAINS the source bytes it was
+// parsed from, and the variable-length fields Message.Msg and Ex.Data ALIAS that
+// source (sub-slices, not copies) to avoid a per-record allocation. They are
+// read-only for the File's lifetime; do not mutate them, and they stay valid as
+// long as the File is reachable. The streaming Decoder (NewDecoder) copies these
+// fields instead, since it does not retain the whole source (V88).
 type File struct {
 	Header  Header
 	Records []Record
+
+	source []byte // retained parse source; Message.Msg / Ex.Data alias it (V84d)
 }
 
-// Record is one body item, holding raw wire-form fields.
+// Record is one body item, holding raw wire-form fields. It is a sum type over
+// the concrete record structs below (a value boxed into the interface). A
+// tagged-union value representation was measured (T93) to cut alloc COUNT but
+// REGRESS throughput + memory ~4× on large files (the 80B inline input bloats a
+// multi-million-element slice), so the interface form is kept (V48/V85, §B14).
 type Record interface{ isRecord() }
 
 type (
@@ -146,7 +159,7 @@ func Parse(r io.Reader) (*File, error) {
 	hdrJSON := before
 	body := after
 
-	f := &File{}
+	f := &File{source: data} // retained so Message.Msg / Ex.Data may alias it (V84d)
 	f.Header.Raw = append(json.RawMessage(nil), hdrJSON...)
 	_ = json.Unmarshal(hdrJSON, &f.Header) // typed view is best-effort; Raw is authoritative
 
@@ -157,7 +170,17 @@ func Parse(r io.Reader) (*File, error) {
 }
 
 func (f *File) parseBody(body []byte) error {
-	u := packer.NewUnpacker(body)
+	// Read directly over body (no copy, V84a) — body is owned by Parse for the
+	// duration and any aliased sub-slice (Message/Ex via T91) lifetime-couples to
+	// the File's retained source.
+	u := &packer.Unpacker{}
+	u.ResetView(body)
+	// Pre-size Records from a coarse bytes-per-record estimate (V84b) — records
+	// are a few varints each; ~4 B/record is conservative, so the slice rarely
+	// regrows on a real file.
+	if est := len(body) / 4; est > 0 {
+		f.Records = make([]Record, 0, est)
+	}
 	for u.RemainingSize() > 0 {
 		n, err := u.NextInt()
 		if err != nil {
@@ -175,23 +198,32 @@ func (f *File) parseBody(body []byte) error {
 	return nil
 }
 
-// ints reads count varints.
-func ints(u *packer.Unpacker, count int) ([]int, error) {
-	out := make([]int, count)
-	for i := range out {
+// bytesOrNil returns nil for an empty slice so a zero-length aliased field
+// deep-equals the streaming Decoder's nil (V89); otherwise returns b unchanged.
+func bytesOrNil(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
+// nextInts reads count varints straight into dst (caller-owned, so no per-record
+// heap allocation, V84c). dst must have len >= count.
+func nextInts(u *packer.Unpacker, dst []int) error {
+	for i := range dst {
 		v, err := u.NextInt()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		out[i] = v
+		dst[i] = v
 	}
-	return out, nil
+	return nil
 }
 
 func readRecord(u *packer.Unpacker, n int) (Record, error) {
 	if n >= 0 {
-		v, err := ints(u, 2) // dx, dy
-		if err != nil {
+		var v [2]int // dx, dy
+		if err := nextInts(u, v[:]); err != nil {
 			return nil, fmt.Errorf("teehistorian: player_diff: %w", err)
 		}
 		return PlayerDiff{Cid: n, Dx: v[0], Dy: v[1]}, nil
@@ -206,8 +238,8 @@ func readRecord(u *packer.Unpacker, n int) (Record, error) {
 		}
 		return TickSkip{Dt: dt}, nil
 	case MarkerPlayerNew:
-		v, err := ints(u, 3)
-		if err != nil {
+		var v [3]int
+		if err := nextInts(u, v[:]); err != nil {
 			return nil, fmt.Errorf("teehistorian: player_new: %w", err)
 		}
 		return PlayerNew{Cid: v[0], X: v[1], Y: v[2]}, nil
@@ -222,27 +254,27 @@ func readRecord(u *packer.Unpacker, n int) (Record, error) {
 		if err != nil {
 			return nil, fmt.Errorf("teehistorian: input cid: %w", err)
 		}
-		in, err := ints(u, packet.InputFields)
-		if err != nil {
+		var arr [packet.InputFields]int
+		if err := nextInts(u, arr[:]); err != nil {
 			return nil, fmt.Errorf("teehistorian: input body: %w", err)
 		}
-		var arr [packet.InputFields]int
-		copy(arr[:], in)
 		pi := packet.UnsafePlayerInputFromRaw(arr) // no validation: deltas/raw values may be out of range
 		if Marker(-n) == MarkerInputNew {
 			return InputNew{Cid: cid, Input: pi}, nil
 		}
 		return InputDiff{Cid: cid, Diff: pi}, nil
 	case MarkerMessage:
-		head, err := ints(u, 2) // cid, size
-		if err != nil {
+		var head [2]int // cid, size
+		if err := nextInts(u, head[:]); err != nil {
 			return nil, fmt.Errorf("teehistorian: message head: %w", err)
 		}
 		raw, err := u.NextRaw(head[1])
 		if err != nil {
 			return nil, fmt.Errorf("teehistorian: message body: %w", err)
 		}
-		return Message{Cid: head[0], Msg: append([]byte(nil), raw...)}, nil
+		// Alias the source (V84d) — File retains it; ⊥ copy. Normalize empty to
+		// nil so a zero-length body deep-equals the streaming Decoder's nil (V89).
+		return Message{Cid: head[0], Msg: bytesOrNil(raw)}, nil
 	case MarkerJoin:
 		cid, err := u.NextInt()
 		if err != nil {
@@ -260,8 +292,8 @@ func readRecord(u *packer.Unpacker, n int) (Record, error) {
 		}
 		return Drop{Cid: cid, Reason: reason}, nil
 	case MarkerConsoleCommand:
-		head, err := ints(u, 2) // cid, flag_mask
-		if err != nil {
+		var head [2]int // cid, flag_mask
+		if err := nextInts(u, head[:]); err != nil {
 			return nil, fmt.Errorf("teehistorian: ccmd head: %w", err)
 		}
 		cmd, err := u.NextStringSanitized(0)
@@ -295,7 +327,9 @@ func readRecord(u *packer.Unpacker, n int) (Record, error) {
 		if err != nil {
 			return nil, fmt.Errorf("teehistorian: ex data: %w", err)
 		}
-		return Ex{UUID: uuid, Data: append([]byte(nil), dat...)}, nil
+		// Alias the source (V84d) — File retains it; ⊥ copy. Normalize empty to nil
+		// to deep-equal the streaming Decoder (V89).
+		return Ex{UUID: uuid, Data: bytesOrNil(dat)}, nil
 	default:
 		return nil, fmt.Errorf("teehistorian: unknown marker %d", -n)
 	}

@@ -250,8 +250,12 @@ func (s *Session) processClientInfo(data []byte) {
 	if err != nil {
 		return
 	}
-	if _, err := u.NextInt(); err != nil { // m_Local
+	local, err := u.NextInt() // m_Local: server marks the local player (T140)
+	if err != nil {
 		return
+	}
+	if local != 0 {
+		s.localClientID.Store(int64(cid))
 	}
 	team, err := u.NextInt()
 	if err != nil {

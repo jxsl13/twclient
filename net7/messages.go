@@ -107,12 +107,13 @@ func SysRconCmd(cmd string) []byte {
 	return data
 }
 
-// SysRequestMapData builds a NETMSG_REQUEST_MAP_DATA system message chunk payload.
-func SysRequestMapData(chunkIdx int) []byte {
-	var data []byte
-	data = append(data, packer.PackMsgID(MsgSysRequestMapData, true)...)
-	data = append(data, packer.PackInt(chunkIdx)...)
-	return data
+// SysRequestMapData builds a NETMSG_REQUEST_MAP_DATA system message. In 0.7 it
+// carries NO payload — the server tracks the next chunk per client and pushes
+// the next sv_map_window on each request (teeworlds client.cpp:1199 sends just
+// the msg id; server.cpp advances m_MapChunk itself). An extra chunk-index int
+// corrupts the stream on a vanilla 0.7 server (B12).
+func SysRequestMapData() []byte {
+	return packer.PackMsgID(MsgSysRequestMapData, true)
 }
 
 // --- Game message builders ---

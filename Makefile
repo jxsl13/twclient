@@ -53,7 +53,7 @@ vuln:
 	govulncheck $(PKGS)
 
 test:
-	go test $(PKGS)
+	go test -timeout 10m $(PKGS)
 
 # Mirror of the CI pre-check gate: every mutating step must leave no diff and no
 # finding. Run after `make tools`.
@@ -69,3 +69,21 @@ pre-check:
 	@echo "pre-check OK"
 
 check: vet lint modernize-check vuln test
+
+# E2E: docker harness (DDNet sixup + vanilla teeworlds 0.7) + client parity tests
+# (V114, T132/T137). The test runs INSIDE the compose network and reaches the
+# servers by service name (ddnet/teeworlds7) — host UDP port forwarding is
+# unreliable on Docker Desktop (macOS), so container-to-container UDP is used.
+# The Go version must match go.mod (1.26).
+.PHONY: e2e
+e2e:
+	docker compose -f e2e/docker-compose.yml up -d --build
+	docker run --rm --network tw-e2e_default -v "$(CURDIR)":/src -w /src \
+	  -e TW_E2E=1 \
+	  -e TW_E2E_DDNET_06=ddnet:8303 \
+	  -e TW_E2E_DDNET_07=ddnet:8303 \
+	  -e TW_E2E_VANILLA_07=teeworlds7:8303 \
+	  golang:1.26 go test -tags e2e -timeout 10m -run TestE2E ./e2e/ -v ; \
+	status=$$? ; \
+	docker compose -f e2e/docker-compose.yml down ; \
+	exit $$status

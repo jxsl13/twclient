@@ -13,7 +13,28 @@ const ServerTickSpeed = 50
 // clock self-corrects to maintain roughly this margin from INPUTTIMING feedback.
 const predictionMarginMs = 10
 
-const inputRingSize = 200
+// DefaultInputTimingRingSize is the number of recent predicted-tick sends kept
+// for INPUTTIMING feedback lookup (TW CSmoothTime m_aInputs[200], the original
+// hardcoded value) — 4s at 50 ticks/s, ample for the server's reply to still
+// find its record. MinInputTimingRingSize is the floor a configured ring is
+// clamped up to so a few hundred ms of inputs always remain (V54).
+const (
+	DefaultInputTimingRingSize = 200
+	MinInputTimingRingSize     = 16
+)
+
+// clampInputTimingRingSize validates a configured ring size (V54): n <= 0 falls
+// back to the default, 0 < n < min is raised to the floor.
+func clampInputTimingRingSize(n int) int {
+	switch {
+	case n <= 0:
+		return DefaultInputTimingRingSize
+	case n < MinInputTimingRingSize:
+		return MinInputTimingRingSize
+	default:
+		return n
+	}
+}
 
 // ExtraInputLead adds additional whole-tick lead to the predicted tick beyond
 // the smooth clock's +1. Snapshots (which set ackTick) arrive every ~2 ticks
@@ -126,8 +147,22 @@ type PredictedTime struct {
 	ackTick  int // latest received snapshot tick (m_AckGameTick)
 	predTick int // last predicted tick we sent input for (m_PredTick)
 
-	inputs [inputRingSize]inputRecord
+	inputs []inputRecord // input-timing history ring; len configurable (V54, WithInputTimingRingSize)
 	cur    int
+}
+
+// configure sizes the input-timing ring (clamped). Called once at Client
+// construction. ⊥ thread-guarded — runs before the session/reader starts.
+func (p *PredictedTime) configure(n int) {
+	p.inputs = make([]inputRecord, clampInputTimingRingSize(n))
+}
+
+// ensureRing lazily allocates the default ring so a directly-constructed
+// (zero-value) PredictedTime stays safe; caller must hold p.mu.
+func (p *PredictedTime) ensureRing() {
+	if len(p.inputs) == 0 {
+		p.inputs = make([]inputRecord, DefaultInputTimingRingSize)
+	}
 }
 
 // OnSnapshot records the latest snapshot tick and, once two snapshots have
@@ -185,8 +220,9 @@ func (p *PredictedTime) NextInput() (predTick, ackTick int, send bool) {
 		return 0, 0, false
 	}
 	p.predTick = newPred
+	p.ensureRing()
 	p.inputs[p.cur] = inputRecord{tick: newPred, predictedTime: predNow, time: now}
-	p.cur = (p.cur + 1) % inputRingSize
+	p.cur = (p.cur + 1) % len(p.inputs)
 	return newPred, p.ackTick, true
 }
 
@@ -201,7 +237,7 @@ func (p *PredictedTime) Adjust(intendedTick, timeLeftMs int) {
 		return
 	}
 	now := timeGet()
-	for k := range inputRingSize {
+	for k := range p.inputs {
 		if p.inputs[k].tick == intendedTick {
 			target := p.inputs[k].predictedTime + (now - p.inputs[k].time)
 			target -= int64(float64(timeLeftMs-predictionMarginMs) / 1000.0 * float64(timeFreq))
@@ -220,6 +256,6 @@ func (p *PredictedTime) Reset() {
 	p.snaps = 0
 	p.ackTick = 0
 	p.predTick = 0
-	p.inputs = [inputRingSize]inputRecord{}
+	p.inputs = make([]inputRecord, len(p.inputs)) // keep configured len, clear records
 	p.cur = 0
 }

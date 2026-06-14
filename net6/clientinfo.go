@@ -40,6 +40,17 @@ type ClientInfo struct {
 	Skin    string
 }
 
+// SkinInts returns the 6 raw int-packed skin fields of an ObjClientInfo item,
+// for cheap skin-change detection (compare arrays) without decoding to a string
+// every snapshot. ok is false when fields is too short.
+func SkinInts(fields []int) (skin [clientInfoSkinInts]int, ok bool) {
+	if len(fields) < SizeClientInfo {
+		return skin, false
+	}
+	copy(skin[:], fields[clientInfoSkinStart:clientInfoSkinStart+clientInfoSkinInts])
+	return skin, true
+}
+
 // DecodeClientInfo decodes an ObjClientInfo item's int fields into name/clan/
 // country/skin. fields must hold at least SizeClientInfo (17) ints; a shorter
 // slice yields the zero value (no panic).

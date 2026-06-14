@@ -77,8 +77,7 @@ func (f *File) Ticks(yield func(tick int, players map[int]PlayerState, inputs ma
 		case InputDiff:
 			prev := input[r.Cid]
 			cur := prev.Raw()
-			diff := r.Diff
-			d := diff.Raw()
+			d := r.Diff.Raw()
 			for i := range cur {
 				cur[i] += d[i]
 			}

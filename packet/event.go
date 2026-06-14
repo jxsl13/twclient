@@ -6,6 +6,11 @@ type MapInfo struct {
 	CRC    int
 	Size   int
 	Sha256 [32]byte // DDNet extension; zero if not provided
+	// NumChunksPerRequest is how many MAP_DATA chunks the 0.7 server sends per
+	// REQUEST_MAP_DATA (sv_map_window). The client requests one window, receives
+	// exactly this many chunks, then requests the next — flooding requests
+	// desyncs the server (B12). 0 if not advertised (older / 0.6).
+	NumChunksPerRequest int
 }
 
 // Event is a high-level occurrence delivered by a Session.

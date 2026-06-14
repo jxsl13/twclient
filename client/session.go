@@ -25,6 +25,13 @@ type Session interface {
 	// session, or the zero value if none were sent (vanilla / 0.7 / old DDNet).
 	Capabilities() packet.ServerCapabilities
 
+	// LocalID returns the local client id when the protocol conveys it OUTSIDE
+	// the snapshot (0.7 Sv_ClientInfo m_Local, T140), or -1 when it does not
+	// (0.6 marks the local player inside the snapshot, resolved post-decode from
+	// Player.Local — V115). The value may become valid asynchronously after the
+	// in-game ClientInfo arrives, so callers re-read it per snapshot.
+	LocalID() int
+
 	// Close disconnects from the server.
 	Close() error
 

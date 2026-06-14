@@ -1,0 +1,47 @@
+# Reproducible e2e game-server harness for the twclient (SPEC T132 / V114).
+#
+# Brings up TWO bot-populated game servers so the client can be exercised
+# against real snapshots containing multiple characters (+ CTF entities):
+#
+#   ddnet       VANILLA DDNet sixup server: serves BOTH 0.6 and 0.7 on one UDP
+#               port (DDRace gametype — multi-character via dbg_dummies, no CTF
+#               flags; the teeworlds7 service supplies CTF flag/pickup coverage).
+#   teeworlds7  vanilla teeworlds 0.7.5 dedicated server on a real CTF map.
+#
+# Both run `dbg_dummies 4` so their snapshots carry several characters.
+#
+# Host port map:
+#   ddnet       udp/8303  (0.6 + 0.7)
+#   teeworlds7  udp/8307  (0.7)
+#
+# Then point the test at them (see e2e/README.md):
+#   TW_E2E=1 \
+#   TW_E2E_DDNET_06=127.0.0.1:8303 \
+#   TW_E2E_DDNET_07=127.0.0.1:8303 \
+#   TW_E2E_VANILLA_07=127.0.0.1:8307 \
+#   go test -tags e2e -run TestE2E ./e2e/ -v
+#
+# NOTE: both upstream artifacts are amd64-only, so `platform` is pinned to
+# linux/amd64 (runs under emulation on Apple Silicon).
+name: tw-e2e
+
+services:
+  ddnet:
+    build:
+      context: .
+      dockerfile: ddnet.Dockerfile
+    image: tw-e2e-ddnet:local
+    platform: linux/amd64
+    ports:
+      - "8303:8303/udp"
+    restart: unless-stopped
+
+  teeworlds7:
+    build:
+      context: .
+      dockerfile: teeworlds7.Dockerfile
+    image: tw-e2e-teeworlds7:local
+    platform: linux/amd64
+    ports:
+      - "8307:8303/udp"
+    restart: unless-stopped

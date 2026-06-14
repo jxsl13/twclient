@@ -82,9 +82,15 @@ type Session struct {
 
 	mu            sync.Mutex // protects ack and sequence for concurrent read/write
 	lastAckedSnap atomic.Int64
+	// localClientID is the local player's client id. 0.7 has no Local bit in the
+	// snapshot PlayerInfo (V115); the server marks the local player's Sv_ClientInfo
+	// with m_Local=true (teeworlds gameclient.cpp:827), captured in
+	// processClientInfo. -1 until learned (T140).
+	localClientID atomic.Int64
 	mapMu         sync.RWMutex
 	mapInfo       packet.MapInfo
 	parsed        *twmap.Map
+	loginMapData  []byte           // raw map bytes drained during login (B11/V110); consumed by DownloadMap
 	mapCache      *packet.MapCache // always set: shared or per-session
 	reader        reader           // background reader state (activated by StartReader)
 
@@ -130,8 +136,15 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 		// reused buffer never reallocates.
 		huffBuf: make([]byte, 0, packet.MaxPacketSize),
 	}
+	s.localClientID.Store(-1) // unknown until Sv_ClientInfo(m_Local) (T140)
 	return s, nil
 }
+
+// LocalID returns the local player's client id once learned from the 0.7
+// Sv_ClientInfo message (m_Local), or -1 if not yet known (T140, V115). 0.7
+// snapshots carry no local marker, so the client uses this to resolve which
+// snapshot player is the local one.
+func (s *Session) LocalID() int { return int(s.localClientID.Load()) }
 
 // Capabilities returns the DDNet server capabilities. 0.7 (sixup) servers do
 // not send the DDNet capabilities message, so this is always the zero value.
@@ -247,7 +260,17 @@ func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.L
 	}
 	s.log.Debug("received MAP_CHANGE", "ack", s.ack)
 
-	// Send ready (signals we have the map / don't need download)
+	// A real teeworlds 0.7 server does NOT advance to CON_READY until the client
+	// has downloaded the map (teeworlds client.cpp:1169/1199 — READY only after
+	// the map is present); a bare READY is silently ignored (B11). Drain the map
+	// over REQUEST_MAP_DATA/MAP_DATA here, before READY, and stash the bytes for
+	// DownloadMap to parse (V110). Best-effort: on failure we still send READY so
+	// the connect surfaces a clear con_ready error rather than hanging here.
+	if err := s.drainMapForLogin(ctx); err != nil {
+		s.log.Warn("login map download failed; sending READY anyway", "error", err)
+	}
+
+	// Send ready (now that the server has pushed the map).
 	s.log.Debug("sending READY")
 	readyChunk := WrapVitalChunk(SysReady(), s.NextSeq())
 	sendReady := func() error { return s.SendChunks(1, readyChunk) }
@@ -512,6 +535,12 @@ func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) e
 		if perr != nil || payload == nil {
 			continue
 		}
+		if hdr.Flags.Control {
+			if closed, cerr := serverClosed(payload); closed { // fail fast on rejection (V109, B10)
+				return cerr
+			}
+			continue
+		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
 		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
 			if info, err := packet.ParseMapChangePayload(data); err == nil {
@@ -526,6 +555,19 @@ func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) e
 	}
 }
 
+// serverClosed reports whether a control payload is a CTRL_CLOSE and, if so, the
+// classified error carrying the server's reason text (V109, B10).
+func serverClosed(payload []byte) (bool, error) {
+	if len(payload) > 0 && payload[0] == MsgCtrlClose {
+		reason := ""
+		if len(payload) > 1 {
+			reason = string(payload[1:])
+		}
+		return true, &packet.ServerClosedError{Reason: reason}
+	}
+	return false, nil
+}
+
 // recvUntilConReady waits for CON_READY, retransmitting the pending READY vital
 // (resend) on packet loss until the connect ctx deadline (V68, B6).
 func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) error {
@@ -538,10 +580,13 @@ func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) er
 		if perr != nil || payload == nil {
 			continue
 		}
-		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
 		if hdr.Flags.Control {
+			if closed, cerr := serverClosed(payload); closed { // fail fast on rejection (V109, B10)
+				return cerr
+			}
 			continue
 		}
+		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
 		// Parse MAP_CHANGE if present (server may send it here on map reload)
 		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
 			if info, err := packet.ParseMapChangePayload(data); err == nil {
@@ -556,6 +601,69 @@ func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) er
 			return nil
 		}
 	}
+}
+
+// drainMapForLogin downloads the map over REQUEST_MAP_DATA/MAP_DATA during the
+// login handshake (before READY) so a real 0.7 server advances to CON_READY
+// (B11, V110). It only RECEIVES and stashes the raw bytes (loginMapData) for
+// DownloadMap to parse later — it deliberately does NOT parse here, so a
+// malformed/large map can never fail or stall the connect at parse time.
+func (s *Session) drainMapForLogin(ctx context.Context) error {
+	info := s.MapInfo()
+	if info.Name == "" || info.Size <= 0 {
+		return nil // no map advertised → nothing to download, send READY as-is
+	}
+	// The server sends NumChunksPerRequest MAP_DATA chunks per REQUEST_MAP_DATA
+	// (sv_map_window). We must request ONE window, receive exactly that many
+	// chunks, then request the next (teeworlds client.cpp:1247). Flooding a
+	// request per packet desyncs + crashes a vanilla 0.7 server (B12).
+	perReq := info.NumChunksPerRequest
+	if perReq <= 0 {
+		perReq = 1
+	}
+	sendReq := func() error {
+		return s.SendChunks(1, WrapVitalChunk(SysRequestMapData(), s.NextSeq()))
+	}
+	if err := sendReq(); err != nil {
+		return err
+	}
+
+	var data []byte
+	chunkCount := 0
+	safety := info.Size/16 + perReq + 64 // generous bound on chunks
+	for len(data) < info.Size && safety > 0 {
+		safety--
+		hdr, payload, err := s.recvAndParsePayload(ctx)
+		if err != nil {
+			return err
+		}
+		if payload == nil {
+			continue
+		}
+		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
+		for _, ch := range packet.UnpackChunks(payload, Split) {
+			if len(ch.Data) < 1 {
+				continue
+			}
+			msgRaw := int(ch.Data[0] & 0x3F)
+			if ch.Data[0]&0x40 != 0 {
+				msgRaw = ^msgRaw
+			}
+			if msgRaw&1 == 0 || msgRaw>>1 != MsgSysMapData { // sys + MAP_DATA only
+				continue
+			}
+			data = append(data, ch.Data[1:]...)
+			chunkCount++
+			if chunkCount%perReq == 0 && len(data) < info.Size { // window done → next
+				if err := sendReq(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	s.loginMapData = data
+	s.log.Debug("login map drained", "bytes", len(data), "want", info.Size, "chunks", chunkCount)
+	return nil
 }
 
 // DownloadMap requests the map from the server, reassembles the data,
@@ -584,13 +692,35 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 		// ok==false means we are the designated downloader
 	}
 
+	// Login already drained the map bytes before READY (B11/V110); the server
+	// pushes the map only once, during CONNECTING, so parse those instead of
+	// re-requesting (which an in-game server would ignore).
+	if len(s.loginMapData) > 0 {
+		data := s.loginMapData
+		s.loginMapData = nil
+		var m *twmap.Map
+		var perr error
+		if s.mapCache != nil {
+			m, perr = s.mapCache.ParseAndPut(info.Name, info.Sha256, data)
+		} else {
+			m, perr = twmap.Parse(bytes.NewReader(data))
+		}
+		if perr != nil {
+			return nil, fmt.Errorf("session07: parse map %q: %w", info.Name, perr)
+		}
+		s.mapMu.Lock()
+		s.parsed = m
+		s.mapMu.Unlock()
+		return m, nil
+	}
+
 	var mapData []byte
 	requestsLeft := (info.Size / 768) + 2 // safety limit
 
 	for len(mapData) < info.Size && requestsLeft > 0 {
 		requestsLeft--
 		// Send REQUEST_MAP_DATA to trigger the server to push the next window
-		reqMsg := SysRequestMapData(0) // chunk index ignored by Sixup server
+		reqMsg := SysRequestMapData() // chunk index ignored by Sixup server
 		reqChunk := WrapVitalChunk(reqMsg, s.NextSeq())
 		if err := s.SendChunks(1, reqChunk); err != nil {
 			if s.mapCache != nil {

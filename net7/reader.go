@@ -56,7 +56,7 @@ type reader struct {
 func (s *Session) StartReader(ctx context.Context) {
 	s.reader.ctx, s.reader.cancel = context.WithCancel(ctx)
 	s.reader.eventCh = make(chan packet.Event, eventChanSizeOrDefault(s.eventChanSize))
-	s.reader.snaps = packet.NewSnapStorage(nil, packet.WithMaxSnaps(s.snapStorageSize))
+	s.reader.snaps = packet.NewSnapStorage(SnapItemSize, packet.WithMaxSnaps(s.snapStorageSize))
 	s.reader.lastRecv.Store(time.Now().UnixNano())
 	// Reader-owned decompress buffer, pre-sized to the protocol max (V75).
 	s.reader.huffBuf = make([]byte, 0, packet.MaxPacketSize)
