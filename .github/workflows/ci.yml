@@ -27,6 +27,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Run all JavaScript actions on Node 24 ahead of the 2026-06-16 runner default
+# switch (GitHub-documented opt-in) — clears the Node 20 deprecation warnings on
+# checkout/setup-go/upload-artifact/docker actions. Removable once Node 24 is the
+# default.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test:
     name: non-live tests + gates
