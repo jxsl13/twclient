@@ -16,8 +16,10 @@ import (
 // Live-server integration tests (SPEC V119). Table-driven over BOTH the DDNet
 // sixup server (0.6 + 0.7) and the vanilla teeworlds 0.7 server, driving the
 // FULL client through the dockerized harness and provoking error states
-// out-of-band via econ. DDNet-only features (capabilities) skip on vanilla with
-// a documented reason. All gated by requireHarness (TW_E2E + -tags e2e, V118).
+// out-of-band via econ. Connects HARD-FAIL on refusal (no skipping) — the
+// harness servers have their connect-flood limits raised/patched, and
+// requireHarness blocks until they accept connects. All gated by requireHarness
+// (TW_E2E + -tags e2e, V118); the only skip is when the harness is not running.
 
 // T150: full client.Connect → map download → decoded snapshot, on every server.
 func TestLiveLoginSnapshot(t *testing.T) {
@@ -27,7 +29,7 @@ func TestLiveLoginSnapshot(t *testing.T) {
 			if s.addr == "" {
 				t.Skip("addr unset")
 			}
-			c := dialClientOrSkip(t, s.version, s.addr)
+			c := dialClientNoReconnect(t, s.version, s.addr)
 			waitSnapshot(t, c)
 			if c.LastSnapTick() <= 0 {
 				t.Fatalf("%s: no snapshot tick", s.name)
@@ -45,7 +47,7 @@ func TestLiveActions(t *testing.T) {
 			if s.addr == "" {
 				t.Skip("addr unset")
 			}
-			c := dialClientOrSkip(t, s.version, s.addr)
+			c := dialClientNoReconnect(t, s.version, s.addr)
 			waitSnapshot(t, c)
 			acts := []client.Action{
 				client.ActChat{Msg: "tw-e2e hello"},
@@ -80,7 +82,7 @@ func TestLiveRcon(t *testing.T) {
 				t.Skip("addr unset")
 			}
 			var lines atomic.Int32
-			c := dialClientOrSkip(t, s.version, s.addr, client.WithRconPassword(rconPassword))
+			c := dialClientNoReconnect(t, s.version, s.addr, client.WithRconPassword(rconPassword))
 			c.OnRconLine(func(_ *client.Client, _ packet.EventRconLine) { lines.Add(1) })
 
 			// WithRconPassword auto-logs-in after connect; wait for auth.
@@ -148,7 +150,7 @@ func TestLiveReconnect(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			t.Cleanup(cancel)
 			if err := c.Connect(ctx); err != nil {
-				t.Skipf("%s: connect refused (harness state, not a code defect): %v", s.name, err)
+				t.Fatalf("%s: connect refused: %v", s.name, err)
 			}
 			t.Cleanup(func() { _ = c.Close() })
 			waitSnapshot(t, c)
@@ -158,7 +160,7 @@ func TestLiveReconnect(t *testing.T) {
 
 			id := waitLocalID(t, c)
 			if id < 0 {
-				t.Skip("local id never appeared")
+				t.Fatal("local id never appeared within warm-up")
 			}
 			conn := dialEcon(t, s.econ)
 			t.Cleanup(func() { _ = conn.WriteLine("unban_all") })
@@ -196,7 +198,7 @@ func TestLiveCapabilities(t *testing.T) {
 			if s.addr == "" {
 				t.Skip("addr unset")
 			}
-			c := dialClientOrSkip(t, s.version, s.addr)
+			c := dialClientNoReconnect(t, s.version, s.addr)
 			waitSnapshot(t, c)
 			caps := c.Capabilities()
 			if s.isDDNet {
@@ -257,11 +259,11 @@ func TestLiveErrorStates(t *testing.T) {
 			conn := dialEcon(t, s.econ)
 			_ = conn.WriteLine("unban_all")
 			time.Sleep(200 * time.Millisecond)
-			c := dialClientOrSkip(t, s.version, s.addr)
+			c := dialClientNoReconnect(t, s.version, s.addr)
 			waitSnapshot(t, c)
 			id := waitLocalID(t, c)
 			if id < 0 {
-				t.Skipf("%s: local client id never appeared (cannot target kick)", s.name)
+				t.Fatalf("%s: local client id never appeared within warm-up (cannot target kick)", s.name)
 			}
 			// Kick exactly the test client OUT-OF-BAND via econ.
 			if err := conn.WriteLine("kick " + strconv.Itoa(id) + " tw-e2e"); err != nil {
@@ -290,11 +292,11 @@ func TestLiveErrorStates(t *testing.T) {
 		_ = conn.WriteLine("unban_all")
 		t.Cleanup(func() { _ = conn.WriteLine("unban_all") })
 		time.Sleep(200 * time.Millisecond) // let the unban take effect before dialing
-		c := dialClientOrSkip(t, packet.Version06, addr)
+		c := dialClientNoReconnect(t, packet.Version06, addr)
 		waitSnapshot(t, c)
 		id := waitLocalID(t, c)
 		if id < 0 {
-			t.Skip("local id never appeared")
+			t.Fatal("local id never appeared within warm-up")
 		}
 		// ban <id> <minutes> <reason>
 		if err := conn.WriteLine("ban " + strconv.Itoa(id) + " 5 tw-e2e"); err != nil {
@@ -326,7 +328,7 @@ func TestLiveRosterPopulated(t *testing.T) {
 			if s.addr == "" {
 				t.Skip("addr unset")
 			}
-			c := dialClientOrSkip(t, s.version, s.addr)
+			c := dialClientNoReconnect(t, s.version, s.addr)
 			waitSnapshot(t, c)
 
 			// Registry fills from the post-ENTERGAME messages + first few
@@ -356,6 +358,45 @@ func TestLiveRosterPopulated(t *testing.T) {
 			if named == 0 {
 				t.Errorf("%s: Roster() has %d entries but none named (identity not populated)", s.name, len(roster))
 			}
+		})
+	}
+}
+
+// T181: protocol AUTO-DETECT (V138/V139). With NO WithVersion, Connect probes
+// the server connlessly and picks the protocol — the DDNet sixup server speaks
+// BOTH, so detection must resolve it to 0.6 (preference); the vanilla server is
+// 0.7-only, so it resolves to 0.7. Each detected client then reaches a snapshot.
+// Direct server probe, no master list (V138) — these harness servers have none.
+func TestLiveAutoDetect(t *testing.T) {
+	requireHarness(t)
+	cases := []struct {
+		name string
+		addr string
+		want packet.Version
+	}{
+		{"ddnet (both → prefer 0.6)", env("TW_E2E_DDNET_06", "ddnet:8303"), packet.Version06},
+		{"vanilla-0.7 (only 0.7)", env("TW_E2E_VANILLA_07", "teeworlds7:8303"), packet.Version07},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.addr == "" {
+				t.Skip("addr unset")
+			}
+			// No WithVersion → default auto-detect. Generous connect ctx: the
+			// detect probe runs before handshake/login/map-download.
+			c := client.New(tc.addr, client.WithoutAutoReconnect())
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			t.Cleanup(cancel)
+			if err := c.Connect(ctx); err != nil {
+				t.Fatalf("connect %s refused: %v", tc.addr, err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+
+			if got := c.Version(); got != tc.want {
+				t.Errorf("%s: auto-detected version = %v, want %v", tc.name, got, tc.want)
+			}
+			waitSnapshot(t, c)
+			t.Logf("%s: auto-detected %v, snapshot tick=%d", tc.name, c.Version(), c.LastSnapTick())
 		})
 	}
 }

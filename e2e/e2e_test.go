@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jxsl13/twclient/client"
 	"github.com/jxsl13/twclient/net6"
 	"github.com/jxsl13/twclient/net7"
 	"github.com/jxsl13/twclient/packet"
@@ -22,12 +24,49 @@ import (
 // asserts 0.6 and 0.7 produce EQUIVALENT shared objects on the same server.
 
 // requireHarness skips the whole suite unless TW_E2E=1 — it must never run as
-// part of the ordinary `go test ./...` (it also needs the `e2e` build tag).
+// part of the ordinary `go test ./...` (it also needs the `e2e` build tag). When
+// the harness IS enabled it also blocks (once) until the servers accept connects,
+// so the live tests — which now hard-FAIL on a refused connect rather than skip —
+// don't race container startup (`docker compose up -d` returns before the servers
+// finish loading their maps).
 func requireHarness(t *testing.T) {
 	t.Helper()
 	if os.Getenv("TW_E2E") != "1" {
 		t.Skip("e2e harness disabled; set TW_E2E=1 after `docker compose -f e2e/docker-compose.yml up -d` (see e2e/README.md)")
 	}
+	harnessReadyOnce.Do(waitHarnessReady)
+	if harnessReadyErr != nil {
+		t.Fatalf("e2e harness not ready: %v", harnessReadyErr)
+	}
+}
+
+var (
+	harnessReadyOnce sync.Once
+	harnessReadyErr  error
+)
+
+// waitHarnessReady polls a real connect to the primary ddnet server (the slowest
+// to come up — it loads the ~1.3 MB "Sunny Side Up" map) until it succeeds or a
+// generous deadline elapses. The sibling servers start alongside it, so a ready
+// ddnet means the harness is warm. Pins 0.6 (no auto-detect probe) + no
+// auto-reconnect for a clean one-shot attempt.
+func waitHarnessReady() {
+	addr := env("TW_E2E_DDNET_06", "ddnet:8303")
+	deadline := time.Now().Add(60 * time.Second)
+	var last error
+	for time.Now().Before(deadline) {
+		c := client.New(addr, client.WithVersion(packet.Version06), client.WithoutAutoReconnect())
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := c.Connect(ctx)
+		cancel()
+		_ = c.Close()
+		if err == nil {
+			return
+		}
+		last = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	harnessReadyErr = fmt.Errorf("ddnet %s did not accept a connect within 60s: %w", addr, last)
 }
 
 // debugLogger returns a stderr debug logger when TW_DEBUG is set, else nil

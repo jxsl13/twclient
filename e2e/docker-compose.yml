@@ -62,6 +62,11 @@ services:
       - "sv_port 8303"
       - "sv_register 0"
       - "sv_sixup 1"
+      # Loss test resends CONNECT repeatedly → each counts toward the connlimit;
+      # raise it so a lossy login is not refused as a connect flood (V120).
+      - "sv_connlimit 100"
+      - "sv_connlimit_time 1"
+      - "sv_van_conn_per_second 0"
       - "sv_map dm1"
       - "dbg_dummies 4"
     restart: unless-stopped
@@ -79,6 +84,9 @@ services:
       - "sv_port 8303"
       - "sv_register 0"
       - "sv_sixup 1"
+      - "sv_connlimit 100"
+      - "sv_connlimit_time 1"
+      - "sv_van_conn_per_second 0"
       - "sv_map \"Sunny Side Up\""
       - "password twsecret"
     restart: unless-stopped
@@ -99,4 +107,39 @@ services:
     platform: linux/amd64
     depends_on: [teeworlds7]
     command: ["./teeworlds_srv", "exec teeworlds7.cfg"]
+    restart: unless-stopped
+
+  # FLOOD-ON instances for the flood-safe reconnect regression tests (T187/V142)
+  # — flood protection INTACT, unlike the patched/raised fast suite (V140). They
+  # prove the flood-safe reconnect policy (V141) does NOT trip a real server's
+  # connect-flood ban. Reached in-network as teeworlds7-flood:8303 /
+  # ddnet-flood:8303 (econ on 9303). Built/run only for the opt-in flood suite.
+  teeworlds7-flood:
+    build:
+      context: .
+      dockerfile: teeworlds7.Dockerfile
+      args:
+        TW_FLOOD_PATCH: "0" # keep the "Stressing network" 60s ban (TW-1)
+    image: tw-e2e-teeworlds7-flood:local
+    platform: linux/amd64
+    restart: unless-stopped
+
+  ddnet-flood:
+    image: tw-e2e-ddnet:local
+    platform: linux/amd64
+    depends_on: [ddnet]
+    command:
+      - "./DDNet-Server"
+      - "sv_name 'tw-e2e ddnet flood'"
+      - "sv_port 8303"
+      - "sv_register 0"
+      - "sv_sixup 1"
+      # DEFAULT connect-flood limits (sv_connlimit 5 / sv_connlimit_time 20s) —
+      # NOT raised — so the DD-1 "Too many connections" path is live (T187).
+      - "sv_map dm1"
+      - "sv_rcon_password twrcon"
+      - "ec_bindaddr 0.0.0.0"
+      - "ec_port 9303"
+      - "ec_password tweecon"
+      - "dbg_dummies 4"
     restart: unless-stopped
