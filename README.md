@@ -11,13 +11,13 @@ browser.
 import "github.com/jxsl13/twclient/client"
 ```
 
-## Minimal dependencies
+## Dependencies
 
-The library imports only [`twmap`](https://github.com/jxsl13/twmap),
-[`teeworlds-go/huffman`](https://github.com/teeworlds-go/huffman), and
-[`teeworlds-go/varint`](https://github.com/teeworlds-go/varint) — **no cgo, no
-OpenGL, no ML framework**. Heavy consumer-side dependencies (GUI, ML) belong in
-your own module, never the root `go.mod`, so library consumers pull none of them.
+The library is pure Go and builds on three small packages:
+[`twmap`](https://github.com/jxsl13/twmap) for map parsing,
+[`teeworlds-go/huffman`](https://github.com/teeworlds-go/huffman) for snapshot
+compression, and [`teeworlds-go/varint`](https://github.com/teeworlds-go/varint)
+for the wire integer encoding.
 
 ## Quickstart
 
