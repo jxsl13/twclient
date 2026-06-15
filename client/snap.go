@@ -481,20 +481,24 @@ func (ss *SnapStorage) deriveRoster06(evs []packet.Event) []packet.Event {
 			curClientIDs[it.ID] = struct{}{}
 			skin, _ := net6.SkinInts(it.Fields)
 			curSkins[it.ID] = skin
-			if ss.rosterInit {
-				if _, seen := ss.prevClientIDs[it.ID]; !seen {
-					ci := net6.DecodeClientInfo(it.Fields)
-					evs = append(evs, packet.EventPlayerJoin{
-						ClientID: it.ID,
-						Name:     ci.Name,
-						Clan:     ci.Clan,
-						Country:  ci.Country,
-						Skin:     ci.Skin,
-					})
-				} else if prev, ok := ss.prevSkins[it.ID]; ok && prev != skin {
-					// Same player, skin object changed — decode only on change (T123).
-					evs = append(evs, packet.EventSkinChange{ClientID: it.ID, Skin: net6.DecodeClientInfo(it.Fields).Skin})
-				}
+			// Emit a join for any id NOT in the previous snapshot — INCLUDING the
+			// FIRST snapshot (prevClientIDs is then empty, so every present client
+			// joins). Gating this on rosterInit dropped the entire INITIAL roster on
+			// 0.6 — players present from snapshot #1 never produced a join, so the
+			// registry stayed empty (issue #3, B24). The dedup is the prevClientIDs
+			// membership check, not a first-snapshot skip.
+			if _, seen := ss.prevClientIDs[it.ID]; !seen {
+				ci := net6.DecodeClientInfo(it.Fields)
+				evs = append(evs, packet.EventPlayerJoin{
+					ClientID: it.ID,
+					Name:     ci.Name,
+					Clan:     ci.Clan,
+					Country:  ci.Country,
+					Skin:     ci.Skin,
+				})
+			} else if prev, ok := ss.prevSkins[it.ID]; ok && prev != skin {
+				// Same player, skin object changed — decode only on change (T123).
+				evs = append(evs, packet.EventSkinChange{ClientID: it.ID, Skin: net6.DecodeClientInfo(it.Fields).Skin})
 			}
 		}
 	}

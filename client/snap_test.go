@@ -213,10 +213,11 @@ func TestDeriveRosterJoinLeave(t *testing.T) {
 		return packet.SnapItem{TypeID: net6.ObjClientInfo, ID: id, Fields: make([]int, net6.SizeClientInfo)}
 	}
 
-	// First snapshot establishes the baseline roster {1,2}; no events.
+	// First snapshot is the INITIAL roster {1,2}: both join (issue #3 / B24 — the
+	// initial roster must be emitted, not silently absorbed).
 	ss.processSnapshot(&packet.Snapshot{Tick: 1, Items: []packet.SnapItem{ci(1), ci(2)}})
-	if ev := ss.deriveEvents(); countEvents[packet.EventPlayerJoin](ev) != 0 {
-		t.Errorf("first snapshot must not emit joins")
+	if got := countEvents[packet.EventPlayerJoin](ss.deriveEvents()); got != 2 {
+		t.Errorf("first snapshot must join the initial roster {1,2}, got %d joins", got)
 	}
 
 	// Player 2 leaves, player 3 joins.
