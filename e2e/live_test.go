@@ -310,6 +310,12 @@ func TestLiveErrorStates(t *testing.T) {
 			t.Errorf("ban reason kind=%s, want banned/closed", reason.Kind)
 		}
 		t.Logf("econ-banned client %d → %s (dur=%s)", id, reason.Kind, reason.BanDuration)
+
+		// Unban the test IP NOW — don't leave the 5-minute ban hanging, which
+		// would refuse the next ddnet test's connect (a hard fail, not a skip,
+		// under V140). The econ unban is effective server-side immediately.
+		_ = conn.WriteLine("unban_all")
+		time.Sleep(500 * time.Millisecond) // brief settle before the next test connects
 	})
 }
 
