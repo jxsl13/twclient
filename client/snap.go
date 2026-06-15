@@ -94,6 +94,10 @@ type SnapStorage struct {
 	objs   packet.SnapObjects
 	decode func(*packet.Snapshot) packet.SnapObjects
 	is07   bool
+	// moveEventThreshold is the per-Client EventPlayerMove throttle (V127), set
+	// from the Client at construction. Zero falls back to DefaultMoveEventThreshold
+	// so a bare SnapStorage{} keeps the original behavior (V48).
+	moveEventThreshold int
 	// prevProjectiles/prevLasers hold the entity IDs seen last snapshot so a
 	// newly appearing projectile/laser can be reported as "fired" (V14).
 	prevProjectiles map[int]struct{}
@@ -223,6 +227,10 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 
 	// Per-visible-player motion/state changes (V13). Only for characters
 	// present in both snapshots so we have a baseline to diff against.
+	moveThreshold := ss.moveEventThreshold
+	if moveThreshold <= 0 { // zero-value SnapStorage → default (V48/V127)
+		moveThreshold = DefaultMoveEventThreshold
+	}
 	for id, c := range cur {
 		p, ok := prev[id]
 		if !ok {
@@ -230,7 +238,7 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 		}
 
 		// Movement, throttled by a minimum delta to avoid per-tick flooding.
-		if dx, dy := c.X-p.X, c.Y-p.Y; abs(dx)+abs(dy) >= moveEventThreshold {
+		if dx, dy := c.X-p.X, c.Y-p.Y; abs(dx)+abs(dy) >= moveThreshold {
 			evs = append(evs, packet.EventPlayerMove{ClientID: id, X: c.X, Y: c.Y})
 		}
 		// Jump: a new jump bit set since last snapshot.
@@ -544,10 +552,12 @@ func (ss *SnapStorage) deriveTransient(evs []packet.Event) []packet.Event {
 	return evs
 }
 
-// moveEventThreshold is the minimum Manhattan position delta (world units)
-// before an EventPlayerMove fires, throttling the otherwise per-tick stream
-// of position updates (V13).
-const moveEventThreshold = 16
+// DefaultMoveEventThreshold is the minimum Manhattan position delta (world
+// units) before an EventPlayerMove fires, throttling the otherwise per-tick
+// stream of position updates (V13). It is the default for the per-Client
+// WithMoveEventThreshold option (V127); a zero-value SnapStorage falls back to
+// it so internal/test construction keeps the original behavior (V48).
+const DefaultMoveEventThreshold = 16
 
 func abs(v int) int {
 	if v < 0 {

@@ -63,6 +63,7 @@ type Client struct {
 	inputTimingRingLen int // CSmoothTime input-timing history ring; 0 = default (V54)
 	eventChanSize      int // session reader event-channel buffer; 0 = default (V54)
 	readBufferSize     int // UDP receive-buffer size; 0 = default (V54)
+	moveEventThreshold int // EventPlayerMove throttle (world units); 0 = default (V127)
 	log                *slog.Logger
 
 	// snap state — protected by mu
@@ -225,6 +226,17 @@ func WithReadBufferSize(n int) Option {
 	return func(c *Client) { c.readBufferSize = n }
 }
 
+// WithMoveEventThreshold sets the minimum Manhattan position delta (world units)
+// a visible player must move before an EventPlayerMove fires (V127), throttling
+// the otherwise per-tick stream of position updates (V13). The default
+// (DefaultMoveEventThreshold, 16) is kept when unset or n <= 0; a larger value
+// throttles harder, n=1 emits on any move. Unlike the V54 buffer options this
+// default is the library's own throttle, not a value lifted from the original
+// client, and it sizes no buffer — it is not a wire constant (V55).
+func WithMoveEventThreshold(n int) Option {
+	return func(c *Client) { c.moveEventThreshold = n }
+}
+
 // WithPrediction enables DDNet-style client-side prediction of the local
 // character (V11). When disabled (the default), PredictedCharacter returns the
 // raw snapshot state.
@@ -315,6 +327,10 @@ func New(address string, opts ...Option) *Client {
 	c.predInputs.configure(c.predInputRingLen)
 	// Size the input-timing history ring (clamped; default when unset, V54).
 	c.predTime.configure(c.inputTimingRingLen)
+	// Clamp the move-event throttle to the default when unset (V41/V127).
+	if c.moveEventThreshold <= 0 {
+		c.moveEventThreshold = DefaultMoveEventThreshold
+	}
 	return c
 }
 
@@ -378,10 +394,11 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	}
 	c.mu.Lock()
 	c.snap = SnapStorage{
-		lastSnapTime: time.Now(),
-		localCID:     -1,
-		decode:       decode,
-		is07:         is07,
+		lastSnapTime:       time.Now(),
+		localCID:           -1,
+		decode:             decode,
+		is07:               is07,
+		moveEventThreshold: c.moveEventThreshold,
 	}
 	c.players = nil // registry starts empty each (re)connect (V102)
 	// Capabilities are sent before MAP_CHANGE and captured synchronously during
