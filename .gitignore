@@ -11,3 +11,4 @@ testdata/teehistorian-large/
 /coverage.out
 coverage.html
 coverage.log
+*.cov
