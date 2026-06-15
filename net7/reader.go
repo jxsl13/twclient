@@ -200,6 +200,14 @@ func (s *Session) processPayload(payload []byte) {
 					s.mapMu.Unlock()
 					packet.SendEvent(s.reader.eventCh, packet.EventMapChange{Info: info})
 				}
+			case MsgSysRconAuthOn:
+				// sixup rcon: the server signals auth success/failure with the
+				// payloadless RCON_AUTH_ON / _OFF (⊥ the 0.6 RCON_AUTH_STATUS) (B19).
+				s.emit(packet.EventRconAuth{Authed: true, Level: 1})
+			case MsgSysRconAuthOff:
+				s.emit(packet.EventRconAuth{Authed: false})
+			case MsgSysRconLine:
+				s.processRconLine(msgData)
 			}
 		} else {
 			switch msgID {

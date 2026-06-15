@@ -30,6 +30,53 @@ func (s *Session) processMotd(data []byte) {
 	}
 }
 
+// processRconLine decodes NETMSG_RCON_LINE (sixup rcon command output, B19).
+func (s *Session) processRconLine(data []byte) {
+	u := packer.NewUnpacker(data)
+	if line, err := u.NextString(); err == nil {
+		s.emit(packet.EventRconLine{Line: line})
+	}
+}
+
+// uuidCapabilities is the DDNet capabilities@ddnet.tw UUID-message id. DDNet
+// sends it (via NETMSG_EX) to BOTH 0.6 and sixup clients (server.cpp:1342, B20).
+var uuidCapabilities = packer.CalculateUUID("capabilities@ddnet.tw")
+
+// storeCapabilities decodes the capabilities body ({Version, Flags}) and stores
+// it on the session. Mirrors net6 (V47/V124); used from the synchronous login
+// scan (the event channel does not exist yet).
+func (s *Session) storeCapabilities(body []byte) (packet.ServerCapabilities, bool) {
+	u := packer.NewUnpacker(body)
+	version, err := u.NextInt()
+	if err != nil || version <= 0 {
+		return packet.ServerCapabilities{}, false
+	}
+	flags, err := u.NextInt()
+	if err != nil {
+		return packet.ServerCapabilities{}, false
+	}
+	caps := packet.ParseServerCapabilities(version, flags)
+	s.capsMu.Lock()
+	s.caps = caps
+	s.capsMu.Unlock()
+	return caps, true
+}
+
+// maybeParseCapabilities stores capabilities if the NETMSG_EX payload (16-byte
+// UUID + body) is capabilities@ddnet.tw. DDNet sends it before MAP_CHANGE during
+// the login handshake (B20/V124).
+func (s *Session) maybeParseCapabilities(exPayload []byte) {
+	if len(exPayload) < 16 {
+		return
+	}
+	var uuid [16]byte
+	copy(uuid[:], exPayload[:16])
+	if uuid != uuidCapabilities {
+		return
+	}
+	s.storeCapabilities(exPayload[16:])
+}
+
 func (s *Session) processBroadcast(data []byte) {
 	u := packer.NewUnpacker(data)
 	if text, err := u.NextString(); err == nil {

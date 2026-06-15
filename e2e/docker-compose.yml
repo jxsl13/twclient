@@ -45,3 +45,38 @@ services:
     ports:
       - "8307:8303/udp"
     restart: unless-stopped
+
+  # Passworded instances (same images, command override) for the wrong-password
+  # reject test (T154). Reached IN-NETWORK by service name (ddnet-pw:8303 /
+  # teeworlds7-pw:8303) — no host port mapping needed.
+  ddnet-pw:
+    image: tw-e2e-ddnet:local
+    platform: linux/amd64
+    depends_on: [ddnet]
+    command:
+      - "./DDNet-Server"
+      - "sv_name 'tw-e2e ddnet pw'"
+      - "sv_port 8303"
+      - "sv_register 0"
+      - "sv_sixup 1"
+      - "sv_map \"Sunny Side Up\""
+      - "password twsecret"
+    restart: unless-stopped
+
+  teeworlds7-pw:
+    image: tw-e2e-teeworlds7:local
+    platform: linux/amd64
+    depends_on: [teeworlds7]
+    command: ["./teeworlds_srv", "exec teeworlds7.cfg", "password twsecret"]
+    restart: unless-stopped
+
+  # A SECOND vanilla instance for the connect-heavy live tests (reconnect, kick):
+  # vanilla teeworlds 0.7 rate-bans an IP after ~6 rapid connects, so spreading
+  # the suite's vanilla connects across two servers keeps each under the threshold
+  # (B17/V120). Same image + cfg (econ on 9303 internal).
+  teeworlds7-b:
+    image: tw-e2e-teeworlds7:local
+    platform: linux/amd64
+    depends_on: [teeworlds7]
+    command: ["./teeworlds_srv", "exec teeworlds7.cfg"]
+    restart: unless-stopped

@@ -119,11 +119,19 @@ func SysPingReply() []byte {
 	return packer.PackMsgID(MsgSysPingReply, true)
 }
 
-// SysRconAuth builds a NETMSG_RCON_AUTH system message chunk payload.
+// SysRconAuth builds a NETMSG_RCON_AUTH system message chunk payload (DDNet 0.6
+// form): a login NAME, the password, then m_SendRconCmds. DDNet's handler
+// (server.cpp NETMSG_RCON_AUTH, non-sixup) reads name → password → int, so a
+// password-only message is mis-read (the password becomes the name) and auth is
+// silently dropped (B19). An empty name + the sv_rcon_password authenticates as
+// admin. (Vanilla teeworlds 0.6 rcon is password-only — divergent; DDNet is the
+// 0.6 target here, V107/?.)
 func SysRconAuth(password string) []byte {
 	var data []byte
 	data = append(data, packer.PackMsgID(MsgSysRconAuth, true)...)
-	data = append(data, packer.PackString(password)...)
+	data = append(data, packer.PackString("")...)       // login name ("" = sv_rcon_password admin)
+	data = append(data, packer.PackString(password)...) // password
+	data = append(data, packer.PackInt(1)...)           // m_SendRconCmds: request the command list
 	return data
 }
 

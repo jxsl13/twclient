@@ -87,6 +87,8 @@ type Session struct {
 	// with m_Local=true (teeworlds gameclient.cpp:827), captured in
 	// processClientInfo. -1 until learned (T140).
 	localClientID atomic.Int64
+	capsMu        sync.RWMutex
+	caps          packet.ServerCapabilities // DDNet caps over sixup (B20/V124)
 	mapMu         sync.RWMutex
 	mapInfo       packet.MapInfo
 	parsed        *twmap.Map
@@ -146,10 +148,13 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 // snapshot player is the local one.
 func (s *Session) LocalID() int { return int(s.localClientID.Load()) }
 
-// Capabilities returns the DDNet server capabilities. 0.7 (sixup) servers do
-// not send the DDNet capabilities message, so this is always the zero value.
+// Capabilities returns the DDNet server capabilities announced for this session.
+// DDNet sends them to sixup clients too (parsed during login, B20/V124); a
+// vanilla teeworlds 0.7 server sends none, so this stays the zero value there.
 func (s *Session) Capabilities() packet.ServerCapabilities {
-	return packet.ServerCapabilities{}
+	s.capsMu.RLock()
+	defer s.capsMu.RUnlock()
+	return s.caps
 }
 
 // Close sends a disconnect and closes the session.
@@ -542,6 +547,11 @@ func (s *Session) recvUntilMapChange(ctx context.Context, resend func() error) e
 			continue
 		}
 		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
+		// DDNet sends the capabilities EX before/with MAP_CHANGE, during this
+		// synchronous handshake (the reader isn't up yet) — scan for it (B20/V124).
+		for _, ex := range packet.ExtractAllSysMsgPayloads(payload, MsgSysEx, Split) {
+			s.maybeParseCapabilities(ex)
+		}
 		if data := packet.ExtractSysMsgPayload(payload, MsgSysMapChange, Split); data != nil {
 			if info, err := packet.ParseMapChangePayload(data); err == nil {
 				s.mapMu.Lock()

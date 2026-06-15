@@ -56,11 +56,19 @@ EXPOSE 8303/udp
 # DDNet/teeworlds run each CLI argument as a console command. sv_max_clients must
 # stay safely above the dummy count (teeworlds#1735). dbg_dummies now EXISTS
 # (CONF_DEBUG build) so 4 bots spawn → multi-character snapshots.
+# econ (ec_port + ec_password) = the out-of-band admin channel the e2e tests use
+# to provoke error states (kick/ban/shutdown); sv_rcon_password exercises the
+# client's own rcon (T152). Static creds — e2e only, never a real deployment.
 CMD ["./DDNet-Server", \
      "sv_name 'tw-e2e ddnet source-debug sixup'", \
      "sv_port 8303", \
      "sv_register 0", \
      "sv_max_clients 16", \
+     "sv_max_clients_per_ip 16", \
      "sv_sixup 1", \
      "sv_map \"Sunny Side Up\"", \
+     "sv_rcon_password twrcon", \
+     "ec_bindaddr 0.0.0.0", \
+     "ec_port 9303", \
+     "ec_password tweecon", \
      "dbg_dummies 4"]

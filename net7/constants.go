@@ -26,6 +26,10 @@ const (
 
 // System message IDs.
 const (
+	// MsgSysEx (NETMSG_EX) carries UUID-based extended messages. DDNet sends them
+	// to sixup clients too — incl. the capabilities@ddnet.tw message (B20) — as
+	// id 0 + 16-byte UUID + body (CServer::RepackMsg, server.cpp).
+	MsgSysEx              = 0
 	MsgSysInfo            = 1
 	MsgSysMapChange       = 2
 	MsgSysMapData         = 3
