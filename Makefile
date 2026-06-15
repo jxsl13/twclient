@@ -8,6 +8,7 @@
 #   make vuln            govulncheck
 #   make test            go test
 #   make cover           go test -race with coverage → coverage.out + func total
+#   make cover-e2e       LIVE net6/net7 coverage via the e2e harness (-coverpkg)
 #   make pre-check       the exact CI gate (fails on any leftover diff/finding)
 #   make check           vet + lint + modernize-check + vuln + test
 
@@ -94,4 +95,26 @@ e2e:
 	  golang:1.26 go test -tags e2e -timeout 10m -run TestE2E ./e2e/ -v ; \
 	status=$$? ; \
 	docker compose -f e2e/docker-compose.yml down ; \
+	exit $$status
+
+# LIVE coverage of net6/net7 (V131/T169/T170). Runs the e2e + live suite against
+# the harness with -coverpkg so the LIVE tests ATTRIBUTE coverage to net6/net7
+# (default ./e2e/ coverage would count only the e2e package). Prints the combined
+# total + a per-package split. Reported, not gated (V130).
+.PHONY: cover-e2e
+cover-e2e:
+	docker compose -f e2e/docker-compose.yml up -d --build
+	docker run --rm --network tw-e2e_default -v "$(CURDIR)":/src -w /src \
+	  -e TW_E2E=1 \
+	  -e TW_E2E_DDNET_06=ddnet:8303 \
+	  -e TW_E2E_DDNET_07=ddnet:8303 \
+	  -e TW_E2E_DDNET_SMALL=ddnet-small:8303 \
+	  -e TW_E2E_VANILLA_07=teeworlds7:8303 \
+	  golang:1.26 go test -tags e2e -covermode=atomic \
+	    -coverpkg=github.com/jxsl13/twclient/net6,github.com/jxsl13/twclient/net7 \
+	    -coverprofile=e2e_live.cov -timeout 10m -run 'TestE2E|TestLive' ./e2e/ ; \
+	status=$$? ; \
+	docker compose -f e2e/docker-compose.yml down ; \
+	go tool cover -func=e2e_live.cov | tail -1 ; \
+	awk 'NR>1{if($$1~/\/net6\//)p="net6";else if($$1~/\/net7\//)p="net7";else next;t[p]+=$$2;if($$3>0)c[p]+=$$2}END{for(k in t)printf "%s: %.1f%% (%d/%d stmts)\n",k,100*c[k]/t[k],c[k],t[k]}' e2e_live.cov ; \
 	exit $$status
