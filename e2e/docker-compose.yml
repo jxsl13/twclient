@@ -46,6 +46,26 @@ services:
       - "8307:8303/udp"
     restart: unless-stopped
 
+  # Small-map DDNet sixup instance for the loss test (T164). The default server's
+  # "Sunny Side Up" is ~1.3 MB, whose 0.7 serial-windowed vital download takes ~50s
+  # under 20% bidirectional loss; a tiny stock map (dm1, ~6 KB) exercises the SAME
+  # loss path (handshake-ACCEPT recovery, MAP_DATA gap retransmit, CON_READY) in
+  # seconds, so the test keeps the full 20%/20% rate AND stays fast. sixup → serves
+  # both 0.6 and 0.7. Reached in-network as ddnet-small:8303.
+  ddnet-small:
+    image: tw-e2e-ddnet:local
+    platform: linux/amd64
+    depends_on: [ddnet]
+    command:
+      - "./DDNet-Server"
+      - "sv_name 'tw-e2e ddnet small'"
+      - "sv_port 8303"
+      - "sv_register 0"
+      - "sv_sixup 1"
+      - "sv_map dm1"
+      - "dbg_dummies 4"
+    restart: unless-stopped
+
   # Passworded instances (same images, command override) for the wrong-password
   # reject test (T154). Reached IN-NETWORK by service name (ddnet-pw:8303 /
   # teeworlds7-pw:8303) — no host port mapping needed.

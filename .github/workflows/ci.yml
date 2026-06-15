@@ -113,6 +113,7 @@ jobs:
             -e TW_E2E=1 \
             -e TW_E2E_DDNET_06=ddnet:8303 \
             -e TW_E2E_DDNET_07=ddnet:8303 \
+            -e TW_E2E_DDNET_SMALL=ddnet-small:8303 \
             -e TW_E2E_VANILLA_07=teeworlds7:8303 \
             golang:1.26 go test -tags e2e -timeout 10m -run TestE2E ./e2e/ -v
       - name: Teardown

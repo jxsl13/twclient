@@ -38,6 +38,17 @@ RUN cmake -S . -B build -G Ninja \
     && cmake --build build --target DDNet-Server \
     && test -x build/DDNet-Server
 
+# Build the 0.6→0.7 map converter and produce a TINY sixup map for the loss test
+# (T164). Stock vanilla maps (dm1, ~6 KB) ship only a 0.6 version in data/maps/;
+# the sixup server needs a 0.7 map in data/maps7/ or it logs "couldn't load map
+# maps7/<name>" and DISABLES 0.7 for it. Converting dm1 yields a small sixup map
+# so the loss test downloads it in seconds at full 20%/20% loss, vs ~50s for the
+# 1.3 MB default "Sunny Side Up". Separate RUN layer so the cached DDNet-Server
+# build above stays valid. Run from /src so data/mapres resolves for embedding.
+RUN cmake --build build --target map_convert_07 \
+    && ./build/map_convert_07 "data/maps/dm1.map" "data/maps7/dm1.map" \
+    && test -f "data/maps7/dm1.map"
+
 # ---- runtime: slim image with just the server binary + data tree -----------
 FROM debian:bookworm-slim
 

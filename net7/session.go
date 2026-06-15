@@ -228,17 +228,48 @@ func (s *Session) Handshake(ctx context.Context) error {
 	// stale/duplicate control packet (e.g. a re-sent token response triggered by
 	// our own token-request retransmit under loss) and keep waiting for ACCEPT,
 	// rather than failing on the first non-accept packet (V126, B21).
+	//
+	// The DDNet sixup server sends CTRL_ACCEPT exactly ONCE and NEVER retransmits
+	// it: OnSixupCtrlMsg accepts the client straight into a slot (DirectInit sets
+	// the connection ONLINE, not PENDING), so the PENDING 500ms accept-resend
+	// never fires, and a duplicate CONNECT is then silently ignored
+	// (ClientExists guard) — network_server.cpp / network_conn.cpp. So under
+	// server->client loss a dropped ACCEPT can never arrive and a pure wait
+	// DEADLOCKS (T164). Recovery: the server slot is already ONLINE, so after a
+	// few intervals without ACCEPT we PRESUME the connection online and return;
+	// Login then sends INFO speculatively and the ONLINE server replies
+	// MAP_CHANGE (recvUntilMapChange also re-sends CONNECT to recover a lost
+	// initial CONNECT). A vanilla 0.7 server (PENDING) likewise goes ONLINE on
+	// the first non-control packet, so speculative INFO is correct there too
+	// (V126/V128).
+	const maxAcceptTimeouts = 4 // ~2s at LoginResendInterval before presuming online
+	timeouts := 0
 	for {
-		resp, err = s.conn.RecvResending(ctx, packet.LoginResendInterval, sendConnect)
+		var payload []byte
+		hdr, payload, err = s.recvAndParsePayloadTimeout(ctx, packet.LoginResendInterval)
 		if err != nil {
-			return fmt.Errorf("session07: recv accept: %w", err)
-		}
-		if err := hdr.Unpack(resp); err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("session07: recv accept: %w", ctx.Err())
+			}
+			// No packet this interval: resend CONNECT and, once a healthy
+			// connection has had time to deliver ACCEPT, presume online (a lost
+			// sixup ACCEPT is never retransmitted) so Login can drive the rest.
+			if serr := sendConnect(); serr != nil {
+				return fmt.Errorf("session07: resend connect: %w", serr)
+			}
+			timeouts++
+			if timeouts >= maxAcceptTimeouts {
+				s.log.Debug("no ACCEPT after retries; presuming connection online, proceeding to INFO (T164)")
+				break
+			}
 			continue
 		}
 		if hdr.Flags.Control {
-			if len(resp) >= 8 && resp[7] == MsgCtrlAccept {
+			if len(payload) >= 1 && payload[0] == MsgCtrlAccept {
 				break
+			}
+			if closed, cerr := serverClosed(payload); closed { // server rejected (V109, B10)
+				return cerr
 			}
 			continue // stale token / keepalive — keep waiting
 		}
@@ -275,8 +306,20 @@ func (s *Session) Login(ctx context.Context, name, clan string, opts ...packet.L
 		return fmt.Errorf("session07: send info: %w", err)
 	}
 
+	// On the resend cadence also re-send CONNECT: if the handshake presumed-online
+	// after a lost ACCEPT (T164) and the INITIAL CONNECT was itself lost, the
+	// server has no slot yet so INFO goes nowhere; re-sending CONNECT creates the
+	// slot (an ONLINE server silently ignores a duplicate, so this is a no-op once
+	// connected, V128). In the no-loss path MAP_CHANGE arrives on the first recv
+	// and this resend never fires — wire behavior unchanged (V110/V111).
+	connectPkt := BuildConnect(s.serverToken, s.clientToken)
+	resendInfo := func() error {
+		_ = s.conn.SendRaw(connectPkt)
+		return sendInfo()
+	}
+
 	// Receive until MAP_CHANGE (server sends capabilities + map info after INFO); resend INFO on loss.
-	if err := s.recvUntilMapChange(ctx, sendInfo); err != nil {
+	if err := s.recvUntilMapChange(ctx, resendInfo); err != nil {
 		return err
 	}
 	s.log.Debug("received MAP_CHANGE", "ack", s.ack)
@@ -358,6 +401,26 @@ func (s *Session) BuildChunkPacket(numChunks int, chunkData []byte) []byte {
 	}
 	s.mu.Unlock()
 	return append(hdr.Pack(), chunkData...)
+}
+
+// SendResendRequest sends an empty packet with the RESEND flag set, asking the
+// server to IMMEDIATELY retransmit all of its unacked vital chunks instead of
+// waiting for its ~1s auto-resend timer (teeworlds network_conn.cpp: a packet
+// with NET_PACKETFLAG_RESEND triggers Resend()). The packet carries our current
+// ack, so the server resends from the first gap. Used under loss to recover a
+// dropped server vital (MAP_DATA / CON_READY) promptly — without it, each lost
+// in-order vital costs ~1s, which starves the windowed map download on a heavily
+// lossy link (T164).
+func (s *Session) SendResendRequest() error {
+	s.mu.Lock()
+	hdr := Header{
+		Flags:     Flags{Resend: true},
+		Ack:       s.ack,
+		NumChunks: 0,
+		Token:     s.serverToken,
+	}
+	s.mu.Unlock()
+	return s.conn.SendRaw(hdr.Pack())
 }
 
 // SendVitalMsg packs a message payload into a vital chunk and sends it.
@@ -595,15 +658,35 @@ func serverClosed(payload []byte) (bool, error) {
 }
 
 // recvUntilConReady waits for CON_READY, retransmitting the pending READY vital
-// (resend) on packet loss until the connect ctx deadline (V68, B6).
+// (resend) on a FIXED cadence until the connect ctx deadline (V68, B6, T163/T164).
+//
+// The resend MUST be on a fixed cadence, NOT gated on inbound silence: under
+// bidirectional loss the server keeps flushing trailing MAP_DATA / other vitals,
+// which would perpetually reset a traffic-gated resend timer (as RecvResending
+// does) and starve our READY retransmit — so a lost READY never reaches the
+// server, it never advances, and CON_READY never comes (the original con_ready
+// stall, V126). Each resend also carries s.ack, prompting the server to resend a
+// CON_READY that was dropped server->client.
 func (s *Session) recvUntilConReady(ctx context.Context, resend func() error) error {
+	lastSend := time.Now()
 	for {
-		resp, err := s.conn.RecvResending(ctx, packet.LoginResendInterval, resend)
-		if err != nil {
-			return fmt.Errorf("session07: recv waiting for con_ready: %w", err)
+		if time.Since(lastSend) >= packet.LoginResendInterval {
+			if err := resend(); err != nil {
+				return fmt.Errorf("session07: resend ready: %w", err)
+			}
+			// Also force the server to resend a CON_READY dropped server->client,
+			// promptly rather than on its ~1s timer (T164).
+			_ = s.SendResendRequest()
+			lastSend = time.Now()
 		}
-		hdr, payload, perr := s.parsePayload(resp, &s.huffBuf)
-		if perr != nil || payload == nil {
+		hdr, payload, err := s.recvAndParsePayloadTimeout(ctx, packet.LoginResendInterval)
+		if err != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("session07: recv waiting for con_ready: %w", ctx.Err())
+			}
+			continue // recv timeout → loop; the fixed cadence drives the resend
+		}
+		if payload == nil {
 			continue
 		}
 		if hdr.Flags.Control {
@@ -664,30 +747,41 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 	var data []byte
 	chunkCount := 0
 	safety := info.Size*2 + 4096 // backstop vs an infinite loop; ctx is the real bound
-	lastReq := time.Now()
+	// Loss recovery must be FAST: the map ("Sunny Side Up") is ~1.3 MB / ~1500
+	// vital chunks, and at 20% bidirectional loss the server's serial windowed
+	// push (sv_map_window=15) recovers a dropped in-order vital only on its ~1s
+	// timer — far too slow for the connect budget (T164). Two levers, both via the
+	// RESEND flag (forces the server to resend its unacked vitals NOW): (1) the
+	// instant we see an OUT-OF-ORDER chunk we know an earlier vital was lost, so we
+	// signal a resend immediately (throttled) rather than waiting a poll; (2) a
+	// stall backstop signals + re-requests when NOTHING in-order has arrived for a
+	// while (the gap chunk AND its successors were all lost). The REQUEST itself is
+	// re-sent only on the slow LoginResendInterval backstop (a same-seq retransmit
+	// the server dedups; flooding NEW requests would desync window pacing + crash a
+	// vanilla server, B12). The no-loss path never sees a gap or stall → no signals.
+	const mapPollInterval = 60 * time.Millisecond
+	const minSignalInterval = 20 * time.Millisecond // throttle resend signals
+	lastProgress := time.Now()
+	lastSignal := time.Now()
+	lastRequest := time.Now()
 	for len(data) < info.Size && safety > 0 {
 		safety--
-		// CADENCE re-request: resend the current request (which carries our ack)
-		// at least every interval — ⊥ only on recv-timeout. Under s2c loss the
-		// server keeps pushing (out-of-order) chunks so a timeout-only resend never
-		// fires, yet our ack is stuck on the gap; re-acking on cadence drives the
-		// server to RESEND the missing in-order vital (T163/T164).
-		if time.Since(lastReq) >= packet.LoginResendInterval {
-			if rerr := sendReq(); rerr != nil {
-				return rerr
+		if time.Since(lastProgress) >= mapPollInterval && time.Since(lastSignal) >= minSignalInterval {
+			_ = s.SendResendRequest() // stall backstop: nudge the server to resend
+			lastSignal = time.Now()
+			if time.Since(lastRequest) >= packet.LoginResendInterval {
+				if rerr := sendReq(); rerr != nil { // backstop re-request (deduped retransmit)
+					return rerr
+				}
+				lastRequest = time.Now()
 			}
-			lastReq = time.Now()
 		}
-		hdr, payload, err := s.recvAndParsePayloadTimeout(ctx, packet.LoginResendInterval)
+		hdr, payload, err := s.recvAndParsePayloadTimeout(ctx, mapPollInterval)
 		if err != nil {
 			if ctx.Err() != nil {
 				return fmt.Errorf("session07: map download: %w", ctx.Err())
 			}
-			if rerr := sendReq(); rerr != nil {
-				return rerr
-			}
-			lastReq = time.Now()
-			continue
+			continue // recv timeout → stall handling at the loop top drives recovery
 		}
 		if payload == nil {
 			continue
@@ -704,11 +798,17 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 		// (seq ≤ ack) or out-of-order future chunk is skipped — the server resends
 		// it until our ack catches up — so the map is never double-appended under
 		// loss (T162).
+		sawMismatch := false
 		for _, ch := range packet.UnpackChunks(payload, Split) {
-			if !ch.Header.Flags.Vital || ch.Header.Seq != (s.ack+1)%packet.MaxSequence {
+			if !ch.Header.Flags.Vital {
+				continue
+			}
+			if ch.Header.Seq != (s.ack+1)%packet.MaxSequence {
+				sawMismatch = true // out-of-order/dup vital → an earlier vital was lost
 				continue
 			}
 			s.ack = ch.Header.Seq
+			lastProgress = time.Now() // in-order vital accepted → healthy, no re-request
 			if len(ch.Data) < 1 {
 				continue
 			}
@@ -727,6 +827,13 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+		// A gap was observed this packet (a future/dup vital) → an earlier vital
+		// was lost; ask the server to resend its unacked vitals NOW rather than
+		// waiting the stall poll, throttled so we don't flood (T164).
+		if sawMismatch && time.Since(lastSignal) >= minSignalInterval {
+			_ = s.SendResendRequest()
+			lastSignal = time.Now()
 		}
 	}
 	s.loginMapData = data

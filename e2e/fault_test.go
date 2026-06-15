@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -21,31 +20,34 @@ import (
 // under ongoing loss. Both protocols (V107 parity).
 func TestE2ELoginUnderLoss(t *testing.T) {
 	requireHarness(t)
+	// Both cases run against the SMALL-map DDNet sixup server (dm1, ~6 KB): the
+	// default "Sunny Side Up" (~1.3 MB) would make the 0.7 serial-windowed vital
+	// download take ~50s under this loss, without exercising any extra protocol
+	// path — a tiny map drives the SAME loss machinery in seconds (see compose
+	// ddnet-small). One sixup server serves BOTH 0.6 and 0.7.
+	addr := env("TW_E2E_DDNET_SMALL", "ddnet-small:8303")
 	cases := []struct {
 		name    string
 		version packet.Version
-		env     string
 		pol     udpfault.Policy
 		skip    string // non-empty → documented parity exception (not yet supported)
 	}{
 		// 0.6 tolerates heavy bidirectional loss (full vital retransmission).
-		{"ddnet-0.6", packet.Version06, "TW_E2E_DDNET_06", udpfault.Policy{DropC2S: 0.2, DropS2C: 0.2, Seed: 1}, ""},
-		// 0.7 under CLIENT→SERVER loss: now fully resilient (T162 map-download +
-		// T163 — vital REQUEST_MAP_DATA/READY retransmit with their ORIGINAL seq, so
-		// a lost client vital no longer leaves a permanent gap in the server's
-		// in-order queue; + cadence re-ack so the server resends dropped chunks).
-		// server→client ACCEPT loss (T164) remains a separate open edge, so this
-		// case is c2s-only; 0.6 covers full bidirectional.
-		{"ddnet-0.7", packet.Version07, "TW_E2E_DDNET_07", udpfault.Policy{DropC2S: 0.3, Seed: 1}, ""},
+		{"ddnet-0.6", packet.Version06, udpfault.Policy{DropC2S: 0.2, DropS2C: 0.2, Seed: 1}, ""},
+		// 0.7 under FULL BIDIRECTIONAL loss, now resilient end-to-end (parity with
+		// 0.6, V107). Every login phase retransmits — handshake CONNECT (B21a) plus,
+		// crucially, a dropped CTRL_ACCEPT: the DDNet sixup server accepts straight
+		// into an ONLINE slot and never re-sends ACCEPT (DirectInit + ClientExists,
+		// network_server.cpp), so the client PRESUMES online after a few intervals
+		// and sends INFO speculatively (T164/V128); INFO (recvUntilMapChange),
+		// map-download MAP_DATA gaps (resend-flag, T162/T164) and READY / CON_READY
+		// (fixed-cadence resend, T163) all recover under loss.
+		{"ddnet-0.7", packet.Version07, udpfault.Policy{DropC2S: 0.2, DropS2C: 0.2, Seed: 1}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.skip != "" {
 				t.Skip(tc.skip)
-			}
-			addr := os.Getenv(tc.env)
-			if addr == "" {
-				t.Skipf("%s unset", tc.env)
 			}
 			px, err := udpfault.New(addr, tc.pol)
 			if err != nil {
@@ -53,14 +55,19 @@ func TestE2ELoginUnderLoss(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = px.Close() })
 
-			// 20% bidirectional loss + retransmission needs more than the 1s login
-			// budget; auto-reconnect OFF so a genuine login failure surfaces.
+			// 20% bidirectional loss + retransmission needs far more than the 1s
+			// login budget — even on the small map the 0.7 serial-windowed download
+			// recovers each lost in-order vital over a round-trip, ~20s here and
+			// more on a slow CI runner; 45s leaves headroom. auto-reconnect OFF so a
+			// genuine login failure surfaces.
 			c := client.New(px.Addr(), client.WithVersion(tc.version), client.WithoutAutoReconnect())
-			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 			t.Cleanup(cancel)
+			start := time.Now()
 			if err := c.Connect(ctx); err != nil {
 				t.Fatalf("%s: connect under loss failed: %v (dropped %d)", tc.name, err, px.Dropped())
 			}
+			t.Logf("%s: connect under loss took %s (dropped %d)", tc.name, time.Since(start).Round(time.Millisecond), px.Dropped())
 			t.Cleanup(func() { _ = c.Close() })
 
 			// A snapshot must still decode under ongoing loss (delta/ack recover).
