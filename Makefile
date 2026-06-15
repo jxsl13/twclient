@@ -7,6 +7,7 @@
 #   make lint            staticcheck (must be clean — library carries no debt)
 #   make vuln            govulncheck
 #   make test            go test
+#   make cover           go test -race with coverage → coverage.out + func total
 #   make pre-check       the exact CI gate (fails on any leftover diff/finding)
 #   make check           vet + lint + modernize-check + vuln + test
 
@@ -21,7 +22,7 @@ PKGS := $(shell go list ./...)
 # `go run` (cannot be `go install`ed from outside x/tools).
 MODERNIZE := go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest
 
-.PHONY: tools fmt tidy vet lint modernize modernize-check vuln test pre-check check
+.PHONY: tools fmt tidy vet lint modernize modernize-check vuln test cover pre-check check
 
 tools:
 	go install honnef.co/go/tools/cmd/staticcheck@latest
@@ -54,6 +55,13 @@ vuln:
 
 test:
 	go test -timeout 10m $(PKGS)
+
+# Race + coverage in ONE pass (mirrors the CI `test` job, V130). Writes
+# coverage.out and prints the per-func + TOTAL summary. e2e tag excluded (the
+# live harness is not part of unit coverage). Reported, never threshold-gated.
+cover:
+	go test -race -covermode=atomic -coverprofile=coverage.out -timeout 10m $(PKGS)
+	go tool cover -func=coverage.out | tail -1
 
 # Mirror of the CI pre-check gate: every mutating step must leave no diff and no
 # finding. Run after `make tools`.
