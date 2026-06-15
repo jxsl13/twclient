@@ -41,8 +41,38 @@ jobs:
         run: make tools
       - name: Gates (vet, staticcheck, modernize-check, vuln, test + doccov)
         run: make check
-      - name: Race detector
-        run: go test -race -timeout 10m ./...
+      - name: Race detector + coverage
+        run: |
+          set -o pipefail
+          # One pass: -race + statement coverage. tee keeps the per-package
+          # "coverage: N%" lines for the summary (no extra test run).
+          go test -race -covermode=atomic -coverprofile=coverage.out -timeout 10m ./... \
+            | tee coverage.log
+      - name: Coverage report
+        if: always()
+        run: |
+          # Full per-function breakdown to the job log (also in the artifact).
+          go tool cover -func=coverage.out
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}')"
+          # Per-package statement % from the test run's own output (coverage.log).
+          pkgcov="$(awk '/coverage:/ {for(i=1;i<=NF;i++) if($i=="coverage:" && $(i+1) ~ /%$/) print "| `" $2 "` | " $(i+1) " |"}' coverage.log | sort)"
+          {
+            echo "## Code coverage"
+            echo ""
+            echo "**Total: ${total}** — non-live suite, \`-race\` (reported, not gated; V130)"
+            echo ""
+            echo "| package | coverage |"
+            echo "| --- | --- |"
+            echo "$pkgcov"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Code coverage::total ${total}"
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: coverage.out
+          if-no-files-found: warn
 
   build:
     name: build+start ${{ matrix.service }}
