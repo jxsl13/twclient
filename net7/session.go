@@ -190,22 +190,27 @@ func (s *Session) Handshake(ctx context.Context) error {
 		return fmt.Errorf("session07: send token request: %w", err)
 	}
 
-	// Step 2: Receive token response, resending the request on loss (V68, B6).
-	resp, err := s.conn.RecvResending(ctx, packet.LoginResendInterval, sendTokenReq)
-	if err != nil {
-		return fmt.Errorf("session07: recv token response: %w", err)
-	}
-
-	var hdr Header
-	if err := hdr.Unpack(resp); err != nil {
-		return fmt.Errorf("session07: unpack token response header: %w", err)
-	}
-	if !hdr.Flags.Control || len(resp) < 12 {
-		return fmt.Errorf("session07: unexpected token response (flags=%+v len=%d)", hdr.Flags, len(resp))
-	}
-	// payload starts at offset 7, ctrl msg id at 7, response token at 8-11
-	if resp[7] != MsgCtrlToken {
-		return fmt.Errorf("session07: expected ctrl token msg, got 0x%02x", resp[7])
+	// Step 2: Receive token response, resending the request on loss (V68, B6);
+	// SKIP any stale/unexpected control packet and keep waiting for the token
+	// response, ⊥ fail on the first one (V126, B21).
+	var (
+		hdr  Header
+		resp []byte
+		err  error
+	)
+	for {
+		resp, err = s.conn.RecvResending(ctx, packet.LoginResendInterval, sendTokenReq)
+		if err != nil {
+			return fmt.Errorf("session07: recv token response: %w", err)
+		}
+		if err := hdr.Unpack(resp); err != nil || !hdr.Flags.Control || len(resp) < 12 {
+			continue
+		}
+		// payload starts at offset 7, ctrl msg id at 7, response token at 8-11
+		if resp[7] == MsgCtrlToken {
+			break
+		}
+		// unexpected control msg — keep waiting for the token response.
 	}
 	copy(s.serverToken[:], resp[8:12])
 	s.log.Debug("received server token",
@@ -219,19 +224,30 @@ func (s *Session) Handshake(ctx context.Context) error {
 		return fmt.Errorf("session07: send connect: %w", err)
 	}
 
-	// Step 4: Receive accept, resending CONNECT on loss (V68, B6).
-	resp, err = s.conn.RecvResending(ctx, packet.LoginResendInterval, sendConnect)
-	if err != nil {
-		return fmt.Errorf("session07: recv accept: %w", err)
-	}
-	if err := hdr.Unpack(resp); err != nil {
-		return fmt.Errorf("session07: unpack accept header: %w", err)
-	}
-	if !hdr.Flags.Control || len(resp) < 8 {
-		return fmt.Errorf("session07: unexpected accept response")
-	}
-	if resp[7] != MsgCtrlAccept {
-		return fmt.Errorf("session07: expected accept msg, got 0x%02x", resp[7])
+	// Step 4: Receive accept, resending CONNECT on loss (V68, B6). SKIP any
+	// stale/duplicate control packet (e.g. a re-sent token response triggered by
+	// our own token-request retransmit under loss) and keep waiting for ACCEPT,
+	// rather than failing on the first non-accept packet (V126, B21).
+	for {
+		resp, err = s.conn.RecvResending(ctx, packet.LoginResendInterval, sendConnect)
+		if err != nil {
+			return fmt.Errorf("session07: recv accept: %w", err)
+		}
+		if err := hdr.Unpack(resp); err != nil {
+			continue
+		}
+		if hdr.Flags.Control {
+			if len(resp) >= 8 && resp[7] == MsgCtrlAccept {
+				break
+			}
+			continue // stale token / keepalive — keep waiting
+		}
+		// A vital GAME chunk arrived (e.g. MAP_CHANGE): the server already
+		// considers us connected, so our ACCEPT was merely lost (B21). Treat the
+		// handshake as complete — recvUntilMapChange re-reads the resent vitals.
+		if hdr.NumChunks > 0 {
+			break
+		}
 	}
 
 	s.log.Info("handshake complete",
@@ -640,18 +656,42 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 
 	var data []byte
 	chunkCount := 0
-	safety := info.Size/16 + perReq + 64 // generous bound on chunks
+	safety := info.Size*2 + 4096 // backstop vs an infinite loop; ctx is the real bound
 	for len(data) < info.Size && safety > 0 {
 		safety--
-		hdr, payload, err := s.recvAndParsePayload(ctx)
+		// Time-boxed recv: on timeout (a lost REQUEST_MAP_DATA or a lost chunk)
+		// resend the current request. The request carries our ack, so the server
+		// resends the unacked MAP_DATA vitals from there (T162/V126/B21).
+		hdr, payload, err := s.recvAndParsePayloadTimeout(ctx, packet.LoginResendInterval)
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				return fmt.Errorf("session07: map download: %w", ctx.Err())
+			}
+			if rerr := sendReq(); rerr != nil {
+				return rerr
+			}
+			continue
 		}
 		if payload == nil {
 			continue
 		}
-		s.ack = packet.CountVitalChunks(payload, hdr.NumChunks, s.ack, Split)
+		if hdr.Flags.Control {
+			if closed, cerr := serverClosed(payload); closed {
+				return cerr
+			}
+			continue
+		}
+		// In-order vital reassembly: accept each vital chunk exactly once, in
+		// sequence (advancing s.ack on the next-expected seq, mirroring
+		// CountVitalChunks), and append the MAP_DATA bytes. A duplicate/retransmit
+		// (seq ≤ ack) or out-of-order future chunk is skipped — the server resends
+		// it until our ack catches up — so the map is never double-appended under
+		// loss (T162).
 		for _, ch := range packet.UnpackChunks(payload, Split) {
+			if !ch.Header.Flags.Vital || ch.Header.Seq != (s.ack+1)%packet.MaxSequence {
+				continue
+			}
+			s.ack = ch.Header.Seq
 			if len(ch.Data) < 1 {
 				continue
 			}
