@@ -137,17 +137,17 @@ func tryConnect(t *testing.T, version packet.Version, addr string, opts ...clien
 	return c, err
 }
 
-// dialClientOrSkip connects like dialClient but SKIPS the test (not fails) when
-// the live server REFUSES the connect (server sent CLOSE). For the econ
-// state-change subtests (kick/ban) a connected client is a PRECONDITION; under a
-// dense single-process run the shared test IP can hit transient ban residue or
-// slot contention, which is a harness-state issue, not a defect in the code under
-// test — skip rather than red (mirrors the `id < 0 → Skip` precondition guard).
-func dialClientOrSkip(t *testing.T, version packet.Version, addr string, opts ...client.Option) *client.Client {
+// dialClientNoReconnect connects with auto-reconnect OFF (so a server-side drop
+// is observable as terminal) and FAILS the test on a refused connect. The
+// harness servers have their connect-flood limits raised/patched (ddnet
+// sv_connlimit + sv_van_conn_per_second; teeworlds "Stressing network" patched),
+// so a refusal is now a real defect, not tolerated harness churn — no skipping
+// (the suite must not silently skip against infra we start ourselves).
+func dialClientNoReconnect(t *testing.T, version packet.Version, addr string, opts ...client.Option) *client.Client {
 	t.Helper()
 	c, err := tryConnect(t, version, addr, opts...)
 	if err != nil {
-		t.Skipf("connect %s (proto %v) refused (harness state, not a code defect): %v", addr, version, err)
+		t.Fatalf("connect %s (proto %v) refused: %v", addr, version, err)
 	}
 	return c
 }
