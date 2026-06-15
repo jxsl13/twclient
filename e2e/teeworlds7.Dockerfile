@@ -11,6 +11,10 @@
 FROM debian:bookworm AS builder
 
 ARG TW_REF=0.7.5
+# TW_FLOOD_PATCH=1 (default) disables the connect-flood ban for the FAST dense
+# suite (V140); =0 keeps the ban INTACT for the flood-safe reconnect regression
+# tests (T187/V142), which need a real flood-protected server.
+ARG TW_FLOOD_PATCH=1
 
 # Server-only build: with -DCLIENT=OFF (below) teeworlds' CMake skips the client
 # deps (OpenGL/X11/SDL2/Freetype) entirely, so the builder needs only the
@@ -32,17 +36,21 @@ RUN git config --global url."https://github.com/".insteadOf "git://github.com/" 
         --recurse-submodules --shallow-submodules \
         https://github.com/teeworlds/teeworlds.git .
 
-# Disable the connect-flood BAN for the e2e harness only. teeworlds' engine bans
-# an IP for 60s when a connection enters ERROR within 1s of connecting
-# ("Stressing network", src/engine/shared/network_server.cpp CNetServer::Update),
-# which the dense single-IP live suite trips on rapid (re)connects → every later
-# connect is refused and the test skips (B17/V120). There is NO config var for
-# this rate (B17). Smallest patch: zero the time threshold so the ban branch is
-# dead and the engine just Drops the errored connection. The grep guard FAILS
-# the build if upstream ever changes the line (no silent no-op). e2e build ONLY.
-RUN sed -i 's/< time_freq() && NetBan()/< 0 \&\& NetBan()/' \
-        src/engine/shared/network_server.cpp \
-    && grep -q '< 0 && NetBan()' src/engine/shared/network_server.cpp
+# Connect-flood BAN handling (TW_FLOOD_PATCH). teeworlds' engine bans an IP for
+# 60s when a connection enters ERROR within 1s of connecting ("Stressing
+# network", src/engine/shared/network_server.cpp CNetServer::Update), with NO
+# config var (B17). When TW_FLOOD_PATCH=1 (default, FAST dense suite, V140) the
+# smallest patch zeroes the time threshold so the ban branch is dead and the
+# engine just Drops the errored connection. When =0 the ban stays INTACT — the
+# flood-safe reconnect regression tests (T187/V142) need a real flood-protected
+# server. The grep guard FAILS the build if upstream changes the line (no silent
+# no-op), in BOTH modes. e2e build ONLY.
+RUN if [ "$TW_FLOOD_PATCH" = "1" ]; then \
+        sed -i 's/< time_freq() && NetBan()/< 0 \&\& NetBan()/' src/engine/shared/network_server.cpp \
+        && grep -q '< 0 && NetBan()' src/engine/shared/network_server.cpp ; \
+    else \
+        grep -q '< time_freq() && NetBan()' src/engine/shared/network_server.cpp ; \
+    fi
 
 # -DCLIENT=OFF = the documented server-only build (skips OpenGL/X11/SDL/Freetype).
 # Debug config defines CONF_DEBUG (the gate that registers dbg_dummies).
