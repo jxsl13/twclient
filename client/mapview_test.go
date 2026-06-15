@@ -94,3 +94,47 @@ func TestMapViewWindow(t *testing.T) {
 		t.Errorf("middle row classes wrong: %v", win[3:6])
 	}
 }
+
+// V134: race-checkpoint detection + the typed raw tile-id accessor.
+func TestMapViewCheckpointAndTileID(t *testing.T) {
+	// 7x1 game layer: air, CP, CPF, time-check-first(35), mid time-check(40),
+	// time-check-last(59), solid.
+	game := twmap.Layer{
+		Kind: twmap.LayerKindGame, Width: 7, Height: 1,
+		Tiles: []twmap.Tile{
+			{ID: twmap.TileAir},
+			{ID: twmap.TileCP},
+			{ID: twmap.TileCPF},
+			{ID: twmap.TileTimeCheckFirst},
+			{ID: 40}, // inside TimeCheckFirst..Last
+			{ID: twmap.TileTimeCheckLast},
+			{ID: twmap.TileSolid},
+		},
+	}
+	v := NewMapView(&twmap.Map{Groups: []twmap.Group{{Layers: []twmap.Layer{game}}}})
+
+	wantCP := []bool{false, true, true, true, true, true, false}
+	for x, want := range wantCP {
+		if got := v.Checkpoint(x, 0); got != want {
+			t.Errorf("Checkpoint(%d,0) = %v, want %v (id %d)", x, got, want, v.TileID(x, 0))
+		}
+	}
+
+	// Typed raw ids.
+	if v.TileID(0, 0) != TileAir || v.TileID(1, 0) != TileCP || v.TileID(2, 0) != TileCPF {
+		t.Errorf("TileID mismatch: %d %d %d", v.TileID(0, 0), v.TileID(1, 0), v.TileID(2, 0))
+	}
+	// Out-of-bounds → solid world border.
+	if v.TileID(-1, 0) != TileSolid || v.TileID(99, 0) != TileSolid {
+		t.Error("OOB TileID should be TileSolid")
+	}
+	if v.Checkpoint(-1, 0) || v.Checkpoint(99, 0) {
+		t.Error("OOB Checkpoint should be false")
+	}
+
+	// nil-map view is safe (V70): everything is the solid border, no checkpoint.
+	nilV := NewMapView(nil)
+	if nilV.TileID(0, 0) != TileSolid || nilV.Checkpoint(0, 0) {
+		t.Error("nil-map view: want TileSolid + no checkpoint")
+	}
+}

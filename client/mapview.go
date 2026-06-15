@@ -23,6 +23,91 @@ const (
 	ClassSwitch
 )
 
+// TileID is a typed game-layer tile id. Its named constants are typed re-exports
+// of twmap's tile ids (the single source of truth), so consumers classify tiles
+// against them WITHOUT importing twmap or hardcoding numbers (V134). Returned by
+// MapView.TileID; see MapView.Checkpoint for the race-checkpoint convenience.
+type TileID uint8
+
+// Game-layer tile ids, mirroring twmap/tile_id.go (V134).
+const (
+	TileAir               = TileID(twmap.TileAir)
+	TileSolid             = TileID(twmap.TileSolid)
+	TileDeath             = TileID(twmap.TileDeath)
+	TileUnhookable        = TileID(twmap.TileUnhookable)
+	TileNoLaser           = TileID(twmap.TileNoLaser)
+	TileThroughCut        = TileID(twmap.TileThroughCut)
+	TileThrough           = TileID(twmap.TileThrough)
+	TileJump              = TileID(twmap.TileJump)
+	TileFreeze            = TileID(twmap.TileFreeze)
+	TileTeleInEvil        = TileID(twmap.TileTeleInEvil)
+	TileUnfreeze          = TileID(twmap.TileUnfreeze)
+	TileDeepFreeze        = TileID(twmap.TileDeepFreeze)
+	TileDeepUnfreeze      = TileID(twmap.TileDeepUnfreeze)
+	TileTeleInWeapon      = TileID(twmap.TileTeleInWeapon)
+	TileTeleInHook        = TileID(twmap.TileTeleInHook)
+	TileWallJump          = TileID(twmap.TileWallJump)
+	TileEHookEnable       = TileID(twmap.TileEHookEnable)
+	TileEHookDisable      = TileID(twmap.TileEHookDisable)
+	TileHitEnable         = TileID(twmap.TileHitEnable)
+	TileHitDisable        = TileID(twmap.TileHitDisable)
+	TileSoloEnable        = TileID(twmap.TileSoloEnable)
+	TileSoloDisable       = TileID(twmap.TileSoloDisable)
+	TileSwitchOpen        = TileID(twmap.TileSwitchOpen)
+	TileSwitchClose       = TileID(twmap.TileSwitchClose)
+	TileTeleIn            = TileID(twmap.TileTeleIn)
+	TileTeleOut           = TileID(twmap.TileTeleOut)
+	TileSpeedBoost        = TileID(twmap.TileSpeedBoost)
+	TileTeleCheckOut      = TileID(twmap.TileTeleCheckOut)
+	TileTeleCheckIn       = TileID(twmap.TileTeleCheckIn)
+	TileRefillJumps       = TileID(twmap.TileRefillJumps)
+	TileStart             = TileID(twmap.TileStart)
+	TileFinish            = TileID(twmap.TileFinish)
+	TileTimeCheckFirst    = TileID(twmap.TileTimeCheckFirst)
+	TileTimeCheckLast     = TileID(twmap.TileTimeCheckLast)
+	TileStop              = TileID(twmap.TileStop)
+	TileStopS             = TileID(twmap.TileStopS)
+	TileStopA             = TileID(twmap.TileStopA)
+	TileTeleCheckEvil     = TileID(twmap.TileTeleCheckEvil)
+	TileCP                = TileID(twmap.TileCP)
+	TileCPF               = TileID(twmap.TileCPF)
+	TileThroughAll        = TileID(twmap.TileThroughAll)
+	TileThroughDir        = TileID(twmap.TileThroughDir)
+	TileTune              = TileID(twmap.TileTune)
+	TileOldLaser          = TileID(twmap.TileOldLaser)
+	TileNPC               = TileID(twmap.TileNPC)
+	TileEHook             = TileID(twmap.TileEHook)
+	TileNoHit             = TileID(twmap.TileNoHit)
+	TileNPH               = TileID(twmap.TileNPH)
+	TileUnlockTeam        = TileID(twmap.TileUnlockTeam)
+	TileAddTime           = TileID(twmap.TileAddTime)
+	TileNPCDisable        = TileID(twmap.TileNPCDisable)
+	TileUnlimitedJumpsOff = TileID(twmap.TileUnlimitedJumpsOff)
+	TileJetpackOff        = TileID(twmap.TileJetpackOff)
+	TileNPHDisable        = TileID(twmap.TileNPHDisable)
+	TileSubtractTime      = TileID(twmap.TileSubtractTime)
+	TileTeleGunEnable     = TileID(twmap.TileTeleGunEnable)
+	TileTeleGunDisable    = TileID(twmap.TileTeleGunDisable)
+	TileNPCEnable         = TileID(twmap.TileNPCEnable)
+	TileUnlimitedJumpsOn  = TileID(twmap.TileUnlimitedJumpsOn)
+	TileJetpackOn         = TileID(twmap.TileJetpackOn)
+	TileNPHEnable         = TileID(twmap.TileNPHEnable)
+	TileLiveFreeze        = TileID(twmap.TileLiveFreeze)
+	TileLiveUnfreeze      = TileID(twmap.TileLiveUnfreeze)
+	TileEntityOffset      = TileID(twmap.TileEntityOffset)
+	TileSpawn             = TileID(twmap.TileSpawn)
+	TileSpawnRed          = TileID(twmap.TileSpawnRed)
+	TileSpawnBlue         = TileID(twmap.TileSpawnBlue)
+	TileFlagstandRed      = TileID(twmap.TileFlagstandRed)
+	TileFlagstandBlue     = TileID(twmap.TileFlagstandBlue)
+	TileArmor             = TileID(twmap.TileArmor)
+	TileHealth            = TileID(twmap.TileHealth)
+	TileWeaponShotgun     = TileID(twmap.TileWeaponShotgun)
+	TileWeaponGrenade     = TileID(twmap.TileWeaponGrenade)
+	TilePowerupNinja      = TileID(twmap.TilePowerupNinja)
+	TileWeaponLaser       = TileID(twmap.TileWeaponLaser)
+)
+
 // MapView is a queryable, read-only view over the COMPLETE local map (V26):
 // all DDNet special-tile layers, not just collision. Out-of-bounds queries
 // return the solid world border.
@@ -86,6 +171,19 @@ func (v *MapView) gameID(tx, ty int) uint8 {
 		return twmap.TileSolid
 	}
 	return v.game[idx].ID
+}
+
+// TileID returns the typed game-layer tile id at (tx,ty). Out-of-bounds yields
+// TileSolid (the world border, V27/V70). Consumers classify against the Tile*
+// constants without importing twmap (V134).
+func (v *MapView) TileID(tx, ty int) TileID { return TileID(v.gameID(tx, ty)) }
+
+// Checkpoint reports whether the tile is a race checkpoint — a plain checkpoint
+// (TileCP/TileCPF) or a numbered time checkpoint (TileTimeCheckFirst..Last). A
+// bool overlay like Start/Finish (V134), e.g. for race UIs that color them.
+func (v *MapView) Checkpoint(tx, ty int) bool {
+	id := v.TileID(tx, ty)
+	return id == TileCP || id == TileCPF || (id >= TileTimeCheckFirst && id <= TileTimeCheckLast)
 }
 
 // Solid reports whether the tile blocks movement. OOB is solid (world border).
