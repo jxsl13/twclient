@@ -146,6 +146,29 @@ func (c *Client) setPlayerSkin(id int, skin string) {
 	}
 }
 
+// applyToRegistry mutates the player registry for a single join/leave/score/
+// team/skin event. It is the SHARED core of the EventCh switch (reader-delivered
+// events) and the 0.6 snap-derived dispatch (deriveEvents), so a DERIVED event
+// updates the registry identically to one delivered as a reader message. On 0.6
+// the snapshot is the ONLY source of join/score/team — without applying derived
+// events here, Roster()/Player() stay empty while 0.7 (reader Sv_ClientInfo)
+// populates: the asymmetry behind issue #6 (B26/V137, parity V107). Other event
+// kinds are no-ops. The caller must hold c.mu.
+func (c *Client) applyToRegistry(ev packet.Event) {
+	switch e := ev.(type) {
+	case packet.EventPlayerJoin:
+		c.upsertPlayer(e)
+	case packet.EventPlayerLeave:
+		c.removePlayer(e.ClientID)
+	case packet.EventScoreChange:
+		c.setPlayerScore(e.ClientID, e.Score)
+	case packet.EventTeamSet:
+		c.setPlayerTeam(e.ClientID, e.Team)
+	case packet.EventSkinChange:
+		c.setPlayerSkin(e.ClientID, e.Skin)
+	}
+}
+
 // clearPlayers empties the registry on disconnect / before reconnect so ghosts
 // never carry across sessions (V102).
 func (c *Client) clearPlayers() { c.players = nil }

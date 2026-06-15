@@ -310,3 +310,52 @@ func TestLiveErrorStates(t *testing.T) {
 		t.Logf("econ-banned client %d → %s (dur=%s)", id, reason.Kind, reason.BanDuration)
 	})
 }
+
+// T178: the player registry MUST populate from the live snapshot on 0.6 at
+// PARITY with 0.7 against the SAME DDNet sixup server — ids at minimum, names
+// when the server carries them (issue #6, B26/V137). The 0.6 join/score/team is
+// DERIVED from the snapshot (deriveRoster06 / deriveGame), not delivered as a
+// reader message, and was previously dispatched only to callbacks, never the
+// registry, so Roster() stayed empty while 0.7 (reader Sv_ClientInfo) populated.
+// This is the LIVE regression V137 demands — the synthetic snapshot unit test
+// missed it twice (#3, #6); only a real dbg_dummies connect catches the gap.
+func TestLiveRosterPopulated(t *testing.T) {
+	requireHarness(t)
+	for _, s := range liveServers() {
+		t.Run(s.name, func(t *testing.T) {
+			if s.addr == "" {
+				t.Skip("addr unset")
+			}
+			c := dialClientOrSkip(t, s.version, s.addr)
+			waitSnapshot(t, c)
+
+			// Registry fills from the post-ENTERGAME messages + first few
+			// snapshots, not snapshot #1 (V121/B18) — poll up to the warm-up.
+			var roster []client.PlayerState
+			named := 0
+			deadline := time.Now().Add(registryWarmup)
+			for time.Now().Before(deadline) {
+				roster = c.Roster()
+				named = 0
+				for _, p := range roster {
+					if p.Name != "" {
+						named++
+					}
+				}
+				if len(roster) > 0 && named > 0 {
+					break
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+
+			t.Logf("%s: roster=%d named=%d localID=%d", s.name, len(roster), named, c.LocalID())
+			// dbg_dummies bots → several entries on BOTH protocols (V116/V107).
+			if len(roster) == 0 {
+				t.Fatalf("%s: Roster() empty after %s warm-up (issue #6/V137 — registry not populated from snapshot)", s.name, registryWarmup)
+			}
+			if named == 0 {
+				t.Errorf("%s: Roster() has %d entries but none named (identity not populated)", s.name, len(roster))
+			}
+		})
+	}
+}

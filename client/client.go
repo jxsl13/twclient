@@ -732,8 +732,16 @@ func (c *Client) handleEvent(ev packet.Event) {
 			c.predTime.OnSnapshot(e.Snap.Tick)
 			c.reconcilePrediction()
 		}
-		// Dispatch snap-derived events after releasing mu (V2).
+		// Dispatch snap-derived events after releasing mu (V2). Unlike the
+		// EventCh path these are DERIVED from the snapshot, not reader messages,
+		// so they must ALSO be applied to the registry here: on 0.6 the snapshot
+		// is the only source of join/score/team, so without this Roster() stays
+		// empty (issue #6, B26/V137). Apply under mu, then dispatch unlocked so
+		// callbacks may read the now-updated registry.
 		for _, dev := range derived {
+			c.mu.Lock()
+			c.applyToRegistry(dev)
+			c.mu.Unlock()
 			c.callbacks.dispatch(c, dev)
 		}
 	case packet.EventRaceFinish:
@@ -763,25 +771,10 @@ func (c *Client) handleEvent(ev packet.Event) {
 		c.mu.Lock()
 		c.caps = e.Caps
 		c.mu.Unlock()
-	case packet.EventPlayerJoin:
+	case packet.EventPlayerJoin, packet.EventPlayerLeave,
+		packet.EventScoreChange, packet.EventTeamSet, packet.EventSkinChange:
 		c.mu.Lock()
-		c.upsertPlayer(e)
-		c.mu.Unlock()
-	case packet.EventPlayerLeave:
-		c.mu.Lock()
-		c.removePlayer(e.ClientID)
-		c.mu.Unlock()
-	case packet.EventScoreChange:
-		c.mu.Lock()
-		c.setPlayerScore(e.ClientID, e.Score)
-		c.mu.Unlock()
-	case packet.EventTeamSet:
-		c.mu.Lock()
-		c.setPlayerTeam(e.ClientID, e.Team)
-		c.mu.Unlock()
-	case packet.EventSkinChange:
-		c.mu.Lock()
-		c.setPlayerSkin(e.ClientID, e.Skin)
+		c.applyToRegistry(ev)
 		c.mu.Unlock()
 	case packet.EventRconAuth:
 		c.mu.Lock()
