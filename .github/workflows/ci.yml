@@ -144,15 +144,51 @@ jobs:
           cache-from: type=gha,scope=teeworlds7
       - name: Start harness
         run: docker compose -f e2e/docker-compose.yml up -d
-      - name: Run live parity suite (in-network)
+      - name: Run live suite + coverage (in-network)
         run: |
+          # TestE2E is the strict parity GATE; TestLive adds the broader live
+          # coverage (its secondary tests skip-guard harness-state connect
+          # refusals, V120/V131, so they don't flake the gate). -coverpkg
+          # attributes the live coverage to the library packages (default would
+          # count only the e2e pkg). Profile + func summary are written on the
+          # mounted volume by the container's go (the host has no go here).
           docker run --rm --network tw-e2e_default -v "$PWD":/src -w /src \
             -e TW_E2E=1 \
             -e TW_E2E_DDNET_06=ddnet:8303 \
             -e TW_E2E_DDNET_07=ddnet:8303 \
             -e TW_E2E_DDNET_SMALL=ddnet-small:8303 \
             -e TW_E2E_VANILLA_07=teeworlds7:8303 \
-            golang:1.26 go test -tags e2e -timeout 10m -run TestE2E ./e2e/ -v
+            golang:1.26 sh -c '
+              go test -tags e2e -covermode=atomic \
+                -coverpkg=github.com/jxsl13/twclient/... \
+                -coverprofile=e2e.cov -timeout 10m -run "TestE2E|TestLive" ./e2e/ -v
+              status=$?
+              go tool cover -func=e2e.cov | tee e2e_cov_func.txt || true
+              exit $status
+            '
+      - name: Live coverage report
+        if: always()
+        run: |
+          [ -f e2e.cov ] || { echo "no e2e.cov (live run produced no profile)"; exit 0; }
+          total="$(awk '/^total:/ {print $3}' e2e_cov_func.txt 2>/dev/null)"
+          {
+            echo "## Live coverage"
+            echo ""
+            echo "**Total: ${total:-n/a}** — live e2e suite (TestE2E + TestLive), -coverpkg over the library (reported, not gated; V132)"
+            echo ""
+            echo "| package | coverage |"
+            echo "| --- | --- |"
+            awk 'NR>1 {p=$1; sub(/:.*/,"",p); n=split(p,seg,"/"); pkg=seg[1]; for(i=2;i<n;i++) pkg=pkg"/"seg[i]; t[pkg]+=$2; if($3>0) c[pkg]+=$2}
+                 END {for (k in t) printf "| `%s` | %.1f%% |\n", k, 100*c[k]/t[k]}' e2e.cov | sort
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Live coverage::total ${total:-n/a}"
+      - name: Upload live coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile-live
+          path: e2e.cov
+          if-no-files-found: warn
       - name: Teardown
         if: always()
         run: docker compose -f e2e/docker-compose.yml down

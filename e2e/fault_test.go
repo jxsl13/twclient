@@ -71,7 +71,11 @@ func TestE2ELoginUnderLoss(t *testing.T) {
 			t.Cleanup(func() { _ = c.Close() })
 
 			// A snapshot must still decode under ongoing loss (delta/ack recover).
-			deadline := time.Now().Add(15 * time.Second)
+			// 30s, not 15s: under sustained 20%/20% loss the full-snapshot keyframe
+			// the delta chain needs is itself dropped repeatedly, so first decode can
+			// take longer than a clean link — headroom keeps the gate from flaking.
+			const snapDeadline = 30 * time.Second
+			deadline := time.Now().Add(snapDeadline)
 			for time.Now().Before(deadline) {
 				if c.LastSnapTick() > 0 {
 					t.Logf("%s: login + snapshot tick=%d under loss (dropped %d)", tc.name, c.LastSnapTick(), px.Dropped())
@@ -79,7 +83,7 @@ func TestE2ELoginUnderLoss(t *testing.T) {
 				}
 				time.Sleep(50 * time.Millisecond)
 			}
-			t.Fatalf("%s: no snapshot within 15s under loss (dropped %d)", tc.name, px.Dropped())
+			t.Fatalf("%s: no snapshot within %s under loss (dropped %d)", tc.name, snapDeadline, px.Dropped())
 		})
 	}
 }
