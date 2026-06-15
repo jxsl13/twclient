@@ -32,6 +32,18 @@ RUN git config --global url."https://github.com/".insteadOf "git://github.com/" 
         --recurse-submodules --shallow-submodules \
         https://github.com/teeworlds/teeworlds.git .
 
+# Disable the connect-flood BAN for the e2e harness only. teeworlds' engine bans
+# an IP for 60s when a connection enters ERROR within 1s of connecting
+# ("Stressing network", src/engine/shared/network_server.cpp CNetServer::Update),
+# which the dense single-IP live suite trips on rapid (re)connects → every later
+# connect is refused and the test skips (B17/V120). There is NO config var for
+# this rate (B17). Smallest patch: zero the time threshold so the ban branch is
+# dead and the engine just Drops the errored connection. The grep guard FAILS
+# the build if upstream ever changes the line (no silent no-op). e2e build ONLY.
+RUN sed -i 's/< time_freq() && NetBan()/< 0 \&\& NetBan()/' \
+        src/engine/shared/network_server.cpp \
+    && grep -q '< 0 && NetBan()' src/engine/shared/network_server.cpp
+
 # -DCLIENT=OFF = the documented server-only build (skips OpenGL/X11/SDL/Freetype).
 # Debug config defines CONF_DEBUG (the gate that registers dbg_dummies).
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCLIENT=OFF \
