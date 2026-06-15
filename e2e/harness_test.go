@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jxsl13/twclient/client"
-	"github.com/jxsl13/twclient/internal/livegate"
 	"github.com/jxsl13/twclient/packet"
 	"github.com/teeworlds-go/econ"
 )
@@ -48,15 +47,9 @@ func dialClient(t *testing.T, version packet.Version, addr string, opts ...clien
 	t.Helper()
 	opts = append([]client.Option{client.WithVersion(version)}, opts...)
 	c := client.New(addr, opts...)
-	// Serialize + space 0.7 connects process-wide to dodge the vanilla teeworlds
-	// flood-ban (B17/V120); 0.6 is a no-op. Acquire BEFORE the timeout ctx so the
-	// spacing wait does not eat the connect deadline.
-	release := livegate.Enter(version)
 	ctx, cancel := context.WithTimeout(t.Context(), loginTimeout)
 	t.Cleanup(cancel)
-	err := c.Connect(ctx)
-	release()
-	if err != nil {
+	if err := c.Connect(ctx); err != nil {
 		t.Fatalf("connect %s (proto %v): %v", addr, version, err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
@@ -137,13 +130,9 @@ func tryConnect(t *testing.T, version packet.Version, addr string, opts ...clien
 	t.Helper()
 	opts = append([]client.Option{client.WithVersion(version), client.WithoutAutoReconnect()}, opts...)
 	c := client.New(addr, opts...)
-	// Gate BEFORE the timeout ctx so the spacing wait does not eat the connect
-	// deadline (serialize+space 0.7 connects, B17/V120).
-	release := livegate.Enter(version)
 	ctx, cancel := context.WithTimeout(t.Context(), loginTimeout)
 	t.Cleanup(cancel)
 	err := c.Connect(ctx)
-	release()
 	t.Cleanup(func() { _ = c.Close() })
 	return c, err
 }

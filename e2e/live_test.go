@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/jxsl13/twclient/client"
-	"github.com/jxsl13/twclient/internal/livegate"
 	"github.com/jxsl13/twclient/packet"
 )
 
@@ -146,12 +145,9 @@ func TestLiveReconnect(t *testing.T) {
 			// Auto-reconnect ON (default). connectCtx must outlive the drop, so a
 			// generous timeout (⊥ dialClient's 1s login ctx).
 			c := client.New(s.addr, client.WithVersion(s.version))
-			release := livegate.Enter(s.version) // serialize+space 0.7 connects (B17/V120), before the ctx timer
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			t.Cleanup(cancel)
-			err := c.Connect(ctx)
-			release()
-			if err != nil {
+			if err := c.Connect(ctx); err != nil {
 				t.Skipf("%s: connect refused (harness state, not a code defect): %v", s.name, err)
 			}
 			t.Cleanup(func() { _ = c.Close() })
@@ -387,14 +383,9 @@ func TestLiveAutoDetect(t *testing.T) {
 			// No WithVersion → default auto-detect. Generous connect ctx: the
 			// detect probe runs before handshake/login/map-download.
 			c := client.New(tc.addr, client.WithoutAutoReconnect())
-			// Gate by the EXPECTED version (the 0.7 target's connless probe is what
-			// the vanilla flood-ban would drop, B17/V120), before the ctx timer.
-			release := livegate.Enter(tc.want)
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 			t.Cleanup(cancel)
-			err := c.Connect(ctx)
-			release()
-			if err != nil {
+			if err := c.Connect(ctx); err != nil {
 				t.Skipf("connect %s refused (harness state, not a code defect): %v", tc.addr, err)
 			}
 			t.Cleanup(func() { _ = c.Close() })

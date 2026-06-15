@@ -73,6 +73,13 @@ EXPOSE 8303/udp
 # econ (ec_port + ec_password) = the out-of-band admin channel the e2e tests use
 # to provoke error states (kick/ban/shutdown); sv_rcon_password exercises the
 # client's own rcon (T152). Static creds — e2e only, never a real deployment.
+#
+# Connect-flood limits RAISED for the dense single-IP live suite: DDNet refuses
+# with "Too many connections in a short time" once an IP exceeds sv_connlimit
+# (default 5) within sv_connlimit_time (default 20s), and sv_van_conn_per_second
+# (default 10) rate-limits vanilla CONNECTs — the e2e run trips both from one IP,
+# which previously skipped tests (V120). 100/1s + antispoof off = effectively no
+# limit for the harness. e2e only.
 CMD ["./DDNet-Server", \
      "sv_name 'tw-e2e ddnet source-debug sixup'", \
      "sv_port 8303", \
@@ -80,6 +87,9 @@ CMD ["./DDNet-Server", \
      "sv_max_clients 64", \
      "sv_max_clients_per_ip 64", \
      "sv_sixup 1", \
+     "sv_connlimit 100", \
+     "sv_connlimit_time 1", \
+     "sv_van_conn_per_second 0", \
      "sv_map \"Sunny Side Up\"", \
      "sv_rcon_password twrcon", \
      "ec_bindaddr 0.0.0.0", \
