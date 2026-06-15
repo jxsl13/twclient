@@ -2,21 +2,38 @@ package net6
 
 import (
 	"log/slog"
+	"net"
 	"testing"
 
 	"github.com/jxsl13/twclient/network"
 	"github.com/jxsl13/twclient/packet"
 )
 
-// newTestSessionLive adds the state the snap-reception handlers need: a snap
-// storage, a discard logger, and a real (but unconnected) UDP conn so ackSnap →
-// sendAckPacket can fire-and-forget without a server.
+// newTestSessionLive adds the state the send/snap handlers need: a snap storage,
+// a discard logger, and a UDP conn dialed to a LOCAL SINK (a drained listener) so
+// every Send* / ackSnap actually transmits without error — a dead port would
+// return ICMP "connection refused" on the connected socket.
 func newTestSessionLive(t *testing.T) *Session {
 	t.Helper()
 	s := newTestSession()
 	s.log = slog.New(slog.DiscardHandler)
 	s.reader.snaps = packet.NewSnapStorage(SnapItemSize)
-	conn, err := network.Dial("127.0.0.1:65535")
+
+	sink, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sink.Close() })
+	go func() {
+		buf := make([]byte, 2048)
+		for {
+			if _, _, e := sink.ReadFrom(buf); e != nil {
+				return
+			}
+		}
+	}()
+
+	conn, err := network.Dial(sink.LocalAddr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
