@@ -39,8 +39,8 @@ jobs:
     name: non-live tests + gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: stable
           cache: true
@@ -82,7 +82,7 @@ jobs:
           echo "::notice title=Code coverage::total ${total}"
       - name: Upload coverage profile
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-profile
           path: coverage.out
@@ -96,10 +96,10 @@ jobs:
       matrix:
         service: [ddnet, teeworlds7]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       - name: Build ${{ matrix.service }} image (source, cached)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: e2e
           file: e2e/${{ matrix.service }}.Dockerfile
@@ -129,12 +129,12 @@ jobs:
     needs: [test, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
       # Rebuild both images from the warmed gha cache (cache hit → fast) and load
       # them under the tags the compose file references, so `up` skips building.
       - name: Load ddnet image (cached)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: e2e
           file: e2e/ddnet.Dockerfile
@@ -142,7 +142,7 @@ jobs:
           tags: tw-e2e-ddnet:local
           cache-from: type=gha,scope=ddnet
       - name: Load teeworlds7 image (cached)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: e2e
           file: e2e/teeworlds7.Dockerfile
@@ -191,7 +191,7 @@ jobs:
           echo "::notice title=Live coverage::total ${total:-n/a}"
       - name: Upload live coverage profile
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-profile-live
           path: e2e.cov
