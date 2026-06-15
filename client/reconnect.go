@@ -36,13 +36,44 @@ func (c *Client) maybeAutoReconnect() {
 // signal, so a graceful shutdown aborts promptly (V39). Banned servers simply
 // keep failing and are retried on the same schedule — each attempt doubles as
 // an unban poll (V35).
+// floodCooldown is the minimum wait before reconnecting after a flood/ban
+// refusal — long enough to clear vanilla teeworlds' 60s "Stressing network" ban
+// AND DDNet's sv_connlimit_time window (≤20s default), so the retry does not
+// re-trip the limit and the client is not kept banned (V141).
+const floodCooldown = 60 * time.Second
+
+// reconnectCooldown returns the minimum delay before the next reconnect given
+// the last disconnect reason: flood/ban/full refusals get the floodCooldown
+// floor (or the server-stated ban duration, whichever is longer); ordinary
+// drops (kick/timeout/closed) get 0 and reconnect on the plain backoff (V141).
+func reconnectCooldown(r DisconnectReason) time.Duration {
+	switch r.Kind {
+	case DisconnectKindFlooded, DisconnectKindBanned, DisconnectKindFull:
+		if r.BanDuration > floodCooldown {
+			return r.BanDuration
+		}
+		return floodCooldown
+	default:
+		return 0
+	}
+}
+
 func (c *Client) reconnectLoop(ctx context.Context, pol ReconnectPolicy) {
 	pol.backoff.Reset()
 	if !pol.resumeWithTimeout {
 		c.ResetTimeoutCode()
 	}
 	for attempt := 0; pol.maxAttempts == 0 || attempt < pol.maxAttempts; attempt++ {
-		timer := time.NewTimer(pol.backoff.Next())
+		// Flood-safe: after a flood/ban refusal wait at least the cooldown floor
+		// so the reconnect rate stays under the server's connect-flood limit and
+		// the client is not IP-banned; ordinary drops use the plain backoff
+		// (V141). LastDisconnect reflects the drop or the most recent failed
+		// attempt's CLOSE reason.
+		delay := pol.backoff.Next()
+		if cd := reconnectCooldown(c.LastDisconnect()); cd > delay {
+			delay = cd
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -147,6 +178,11 @@ const (
 	DisconnectKindShuttingDown
 	// DisconnectKindFull is a rejection because the server is full.
 	DisconnectKindFull
+	// DisconnectKindFlooded is a connect-flood refusal: DDNet "Too many
+	// connections in a short time" (sv_connlimit) or vanilla teeworlds'
+	// "Stressing network" rate ban. The reconnect loop waits a longer cooldown
+	// for this kind so the client stays under the server's flood limit (V141).
+	DisconnectKindFlooded
 	// DisconnectKindWrongPassword is a rejection for a wrong/missing password.
 	DisconnectKindWrongPassword
 	// DisconnectKindUnknown is any other reason; Text holds the raw string.
@@ -168,6 +204,8 @@ func (k DisconnectKind) String() string {
 		return "shutting_down"
 	case DisconnectKindFull:
 		return "full"
+	case DisconnectKindFlooded:
+		return "flooded"
 	case DisconnectKindWrongPassword:
 		return "wrong_password"
 	default:
@@ -199,6 +237,10 @@ func NewDisconnectReason(raw string) DisconnectReason {
 		r.Kind = DisconnectKindClosed
 	case strings.Contains(low, "wrong password") || strings.Contains(low, "no password"):
 		r.Kind = DisconnectKindWrongPassword
+	case strings.Contains(low, "too many connection") || strings.Contains(low, "stressing"):
+		// DDNet sv_connlimit ("Too many connections in a short time") or vanilla
+		// teeworlds' "Stressing network" rate ban (V141/B27).
+		r.Kind = DisconnectKindFlooded
 	case strings.Contains(low, "banned"):
 		r.Kind = DisconnectKindBanned
 		if m := banMinutesRe.FindStringSubmatch(low); m != nil {

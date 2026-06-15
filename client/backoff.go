@@ -15,8 +15,12 @@ type Backoff interface {
 }
 
 // ExponentialBackoff doubles the delay on each consecutive retry up to a cap.
-// The default (DefaultBackoff) starts at 1s, doubles, and caps at 1h — the cap
-// then acts as the steady-state poll interval between reconnect/unban tries.
+// The default (DefaultBackoff) starts at 3s, doubles, and caps at 1h — the cap
+// then acts as the steady-state poll interval between reconnect/unban tries. The
+// 3s base is FLOOD-SAFE: reconnect CONNECTs land at t=3s,9s,21s,… so ≤3 occur in
+// any 20s window — under DDNet's sv_connlimit (5/20s) with margin, and slow
+// enough that a failed attempt isn't an immediate retry (which is what trips
+// vanilla teeworlds' "errored within 1s" → 60s ban). See V141.
 // Fields are unexported so a zero/partial literal cannot bypass the validation
 // in the constructor (V41); build it with NewExponentialBackoff.
 type ExponentialBackoff struct {
@@ -41,9 +45,11 @@ func NewExponentialBackoff(base time.Duration, factor float64, max time.Duration
 	return &ExponentialBackoff{base: base, max: max, factor: factor, cur: base}
 }
 
-// DefaultBackoff is NewExponentialBackoff(1s, 2, 1h).
+// DefaultBackoff is NewExponentialBackoff(3s, 2, 1h) — the flood-safe schedule
+// (V141). Use WithBackoff to override (e.g. a faster base on a server you
+// control with flood protection disabled).
 func DefaultBackoff() Backoff {
-	return NewExponentialBackoff(time.Second, 2, time.Hour)
+	return NewExponentialBackoff(3*time.Second, 2, time.Hour)
 }
 
 // Next returns the current delay and advances toward the cap.
