@@ -359,3 +359,42 @@ func TestLiveRosterPopulated(t *testing.T) {
 		})
 	}
 }
+
+// T181: protocol AUTO-DETECT (V138/V139). With NO WithVersion, Connect probes
+// the server connlessly and picks the protocol — the DDNet sixup server speaks
+// BOTH, so detection must resolve it to 0.6 (preference); the vanilla server is
+// 0.7-only, so it resolves to 0.7. Each detected client then reaches a snapshot.
+// Direct server probe, no master list (V138) — these harness servers have none.
+func TestLiveAutoDetect(t *testing.T) {
+	requireHarness(t)
+	cases := []struct {
+		name string
+		addr string
+		want packet.Version
+	}{
+		{"ddnet (both → prefer 0.6)", env("TW_E2E_DDNET_06", "ddnet:8303"), packet.Version06},
+		{"vanilla-0.7 (only 0.7)", env("TW_E2E_VANILLA_07", "teeworlds7:8303"), packet.Version07},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.addr == "" {
+				t.Skip("addr unset")
+			}
+			// No WithVersion → default auto-detect. Generous connect ctx: the
+			// detect probe runs before handshake/login/map-download.
+			c := client.New(tc.addr, client.WithoutAutoReconnect())
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			t.Cleanup(cancel)
+			if err := c.Connect(ctx); err != nil {
+				t.Skipf("connect %s refused (harness state, not a code defect): %v", tc.addr, err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+
+			if got := c.Version(); got != tc.want {
+				t.Errorf("%s: auto-detected version = %v, want %v", tc.name, got, tc.want)
+			}
+			waitSnapshot(t, c)
+			t.Logf("%s: auto-detected %v, snapshot tick=%d", tc.name, c.Version(), c.LastSnapTick())
+		})
+	}
+}

@@ -56,7 +56,8 @@ type Client struct {
 	rconPassword       string                    // rcon password for auto-login + re-auth (T30/T31); empty = no auto-login
 	rconAuthed         bool                      // current rcon auth state (V44), protected by mu
 	caps               packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
-	version            packet.Version
+	version            packet.Version // VersionAuto = detect at Connect (V138); else pinned via WithVersion
+	detectTimeout      time.Duration  // auto-detect connless probe window; 0 = DefaultDetectTimeout (V138)
 	mapCache           *packet.MapCache
 	snapStorageSize    int // packet.SnapStorage window for the session reader; 0 = default (V53)
 	predInputRingLen   int // prediction input ring size; 0 = default (V54)
@@ -179,9 +180,19 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// WithVersion sets the protocol version. The default is packet.Version06.
+// WithVersion PINS the protocol version (packet.Version06 or packet.Version07)
+// and SKIPS auto-detection. When unset the version is packet.VersionAuto and
+// Connect detects the server's protocol via a direct connless probe, preferring
+// 0.6 when the server answers both (V138/V139).
 func WithVersion(v packet.Version) Option {
 	return func(c *Client) { c.version = v }
+}
+
+// WithDetectTimeout bounds the connless protocol auto-detect probe window
+// (default DefaultDetectTimeout). Only used when the version is unpinned; the
+// probe is also bounded by the Connect context, whichever fires first (V138).
+func WithDetectTimeout(d time.Duration) Option {
+	return func(c *Client) { c.detectTimeout = d }
 }
 
 // WithMapCache sets a shared map cache. Multiple clients using the same
@@ -319,8 +330,10 @@ func WithoutAutoReconnect() Option {
 }
 
 // New creates a new headless client for the given server address.
-// By default it uses protocol version 0.6, discards logs, creates its own map
-// cache, and auto-reconnects with exponential backoff. Use options to customize.
+// By default it AUTO-DETECTS the server's protocol at Connect (preferring 0.6
+// when the server answers both, V138), discards logs, creates its own map
+// cache, and auto-reconnects with exponential backoff. Pin the protocol with
+// WithVersion to skip detection. Use options to customize.
 func New(address string, opts ...Option) *Client {
 	c := &Client{
 		address:         address,
@@ -328,7 +341,8 @@ func New(address string, opts ...Option) *Client {
 		clan:            "",
 		skin:            packet.DefaultSkin,
 		country:         packet.DefaultCountry,
-		version:         packet.Version06,
+		version:         packet.VersionAuto, // detect at Connect unless WithVersion pins (V138)
+		detectTimeout:   DefaultDetectTimeout,
 		mapCache:        packet.NewMapCache(),
 		log:             slog.New(slog.DiscardHandler),
 		predTun:         physics.DefaultTuning(),
@@ -376,6 +390,29 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		var cancelSeq context.CancelFunc
 		seqCtx, cancelSeq = context.WithTimeout(ctx, c.connectTimeout)
 		defer cancelSeq()
+	}
+
+	// Resolve the protocol version BEFORE creating the session (dialSession
+	// switches on it). An unpinned version (VersionAuto) is detected by a direct
+	// connless probe to the server — no master-list lookup (V138). The detected
+	// value is stored on the client, so reconnects (Reconnect → Connect) see a
+	// pinned version and skip the probe (detect once, reuse, V136).
+	c.mu.Lock()
+	// The newSessionFn test seam injects a session, bypassing real dialing — so
+	// it also bypasses the connless probe (detection only chooses which REAL
+	// session to dial; there is nothing to probe when the session is injected).
+	needDetect := c.version == packet.VersionAuto && c.newSessionFn == nil
+	detectTO := c.detectTimeout
+	c.mu.Unlock()
+	if needDetect {
+		v, derr := detectVersion(seqCtx, c.address, detectTO)
+		if derr != nil {
+			return derr
+		}
+		c.mu.Lock()
+		c.version = v
+		c.mu.Unlock()
+		c.log.Info("protocol auto-detected", "addr", c.address, "version", v)
 	}
 
 	// Session lifetime: independent of the caller's ctx, cancelled by Close.
@@ -529,6 +566,15 @@ func (c *Client) Reconnect(ctx context.Context) error {
 
 // IsConnected returns true if the client has an active session.
 func (c *Client) IsConnected() bool { return c.sess != nil }
+
+// Version returns the protocol version in use: the value pinned by WithVersion,
+// or the version resolved by auto-detect after a successful Connect. It is
+// packet.VersionAuto before the first successful auto-detect Connect (V138/V139).
+func (c *Client) Version() packet.Version {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.version
+}
 
 // Err returns the last error from the background event loop (e.g.
 // server disconnect). Returns nil while the connection is healthy.
