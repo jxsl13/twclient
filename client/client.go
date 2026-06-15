@@ -79,14 +79,22 @@ type Client struct {
 	readerCancel context.CancelFunc
 	doneCh       chan struct{}
 
-	// automatic reconnection (T26). connectCtx is the context passed to Connect;
-	// cancelling it gracefully stops reconnect retries. closed is shut by Close
-	// to abort an in-progress backoff wait; closing marks a deliberate teardown
-	// so a server drop during shutdown is not auto-reconnected (V40).
+	// automatic reconnection (T26). connectCtx is the SESSION-LIFETIME context
+	// (created in the first Connect, reused across reconnects, cancelled by Close
+	// via lifeCancel) — NOT the caller's Connect ctx (B25/V136). The reader,
+	// event loop, and reconnect loop all bind to it, so only Close (or a server
+	// drop) ends the session — a handshake-scoped caller ctx never does. closed
+	// is shut by Close to abort an in-progress backoff wait; closing marks a
+	// deliberate teardown so a server drop during shutdown is not auto-reconnected
+	// (V40). connectTimeout bounds the connect SEQUENCE (handshake/login/map) only.
 	reconnectPolicy ReconnectPolicy
 	connectCtx      context.Context
+	lifeCancel      context.CancelFunc
+	connectTimeout  time.Duration
 	closed          chan struct{}
 	closeOnce       sync.Once
+	// newSessionFn overrides session creation in tests (nil → newSession).
+	newSessionFn func() (Session, error)
 	closing         atomic.Bool
 
 	// disconnection error — set by event loop, read by Err()
@@ -289,6 +297,21 @@ func WithReconnectPolicy(p ReconnectPolicy) Option {
 	return func(c *Client) { c.reconnectPolicy = p }
 }
 
+// WithConnectTimeout bounds the connect SEQUENCE — handshake, login, and map
+// download — without bounding the session that follows (V136). It is the safe
+// way to cap how long Connect may block: the deadline applies only until Connect
+// returns; the live session then runs until Close. Unset (0) means the connect
+// sequence is bounded only by the context passed to Connect. Use this instead of
+// passing a `context.WithTimeout` to Connect — that ctx no longer kills the
+// session, but WithConnectTimeout is the explicit, self-documenting bound.
+func WithConnectTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.connectTimeout = d
+		}
+	}
+}
+
 // WithoutAutoReconnect disables automatic reconnection; a server drop then
 // surfaces via Err()/LastDisconnect without the client retrying.
 func WithoutAutoReconnect() Option {
@@ -335,18 +358,36 @@ func New(address string, opts ...Option) *Client {
 }
 
 // Connect creates a new session, performs the protocol handshake, logs in,
-// downloads the map, starts the background event reader, and begins
-// automatic snap processing. The context governs the entire client lifetime:
-// cancelling it stops the background reader and unblocks all I/O.
-// After Connect returns, game state is accessible via Character(), RaceTime(), etc.
+// downloads the map, starts the background event reader, and begins automatic
+// snap processing. Game state is then accessible via Character(), RaceTime(), etc.
+//
+// The passed ctx bounds ONLY the connect sequence (handshake/login/map download);
+// it does NOT govern the session. Once Connect returns, the session runs on its
+// own lifetime and is ended by Close — so the obvious `ctx, cancel :=
+// context.WithTimeout(bg, d); defer cancel()` pattern is safe: cancelling that
+// ctx after Connect does not kill the live session (B25/V136). To cap how long
+// Connect may block, use WithConnectTimeout instead of (or in addition to) a
+// deadline'd ctx.
 func (c *Client) Connect(ctx context.Context) (err error) {
-	// Remember the caller's context so auto-reconnect can bind to it: cancelling
-	// it gracefully aborts reconnect retries (T26, V39).
+	// Connect-sequence ctx: the caller's ctx, optionally narrowed by
+	// WithConnectTimeout. Bounds Login + DownloadMap only — never the session.
+	seqCtx := ctx
+	if c.connectTimeout > 0 {
+		var cancelSeq context.CancelFunc
+		seqCtx, cancelSeq = context.WithTimeout(ctx, c.connectTimeout)
+		defer cancelSeq()
+	}
+
+	// Session lifetime: independent of the caller's ctx, cancelled by Close.
+	// Created once and reused across reconnects so the lifetime spans them (V136).
 	c.mu.Lock()
-	c.connectCtx = ctx
+	if c.lifeCancel == nil {
+		c.connectCtx, c.lifeCancel = context.WithCancel(context.Background())
+	}
+	lifeCtx := c.connectCtx
 	c.mu.Unlock()
 
-	sess, err := c.newSession()
+	sess, err := c.dialSession()
 	if err != nil {
 		return fmt.Errorf("client: dial %s: %w", c.address, err)
 	}
@@ -363,7 +404,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 	if c.password != "" {
 		loginOpts = append(loginOpts, packet.WithLoginPassword(c.password))
 	}
-	if err := sess.Login(ctx, c.name, c.clan, loginOpts...); err != nil {
+	if err := sess.Login(seqCtx, c.name, c.clan, loginOpts...); err != nil {
 		// A server rejection during login arrives as a CTRL_CLOSE (V109, B10):
 		// classify the reason and surface it as ErrServerClosed instead of an
 		// opaque timeout, so callers (and auto-reconnect, V34/V35) can react. The
@@ -380,7 +421,7 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		return fmt.Errorf("client: login: %w", err)
 	}
 
-	if _, err := sess.DownloadMap(ctx); err != nil {
+	if _, err := sess.DownloadMap(seqCtx); err != nil {
 		c.log.Warn("map download failed, continuing without map", "error", err)
 	}
 
@@ -413,8 +454,10 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 
 	c.predTime.Reset()
 
-	// Create a child context for the reader — cancelled by Close or parent ctx.
-	readerCtx, readerCancel := context.WithCancel(ctx)
+	// Reader context: a child of the SESSION lifetime (lifeCtx), so Close (which
+	// cancels lifeCtx) stops it AND closeSession can stop just this reader on
+	// reconnect via readerCancel. It is NOT derived from the caller's ctx (B25).
+	readerCtx, readerCancel := context.WithCancel(lifeCtx)
 	sess.StartReader(readerCtx)
 	c.sess = sess
 
@@ -442,7 +485,16 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 func (c *Client) Close() error {
 	c.closing.Store(true)
 	c.closeOnce.Do(func() { close(c.closed) })
-	return c.closeSession()
+	err := c.closeSession()
+	// End the session lifetime (B25/V136): cancels lifeCtx → the reader/event
+	// loop/reconnect bound to it. A handshake-scoped caller ctx never did this.
+	c.mu.Lock()
+	if c.lifeCancel != nil {
+		c.lifeCancel()
+		c.lifeCancel = nil
+	}
+	c.mu.Unlock()
+	return err
 }
 
 // closeSession tears down the current session and event loop without marking
@@ -773,6 +825,15 @@ func (c *Client) setErr(err error) {
 }
 
 // newSession creates the protocol-specific session based on the configured version.
+// dialSession creates the protocol session — via the test seam newSessionFn
+// when set, otherwise newSession.
+func (c *Client) dialSession() (Session, error) {
+	if c.newSessionFn != nil {
+		return c.newSessionFn()
+	}
+	return c.newSession()
+}
+
 func (c *Client) newSession() (Session, error) {
 	switch c.version {
 	case packet.Version06:
