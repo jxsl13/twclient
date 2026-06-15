@@ -16,9 +16,8 @@ import "github.com/jxsl13/twclient/client"
 The library imports only [`twmap`](https://github.com/jxsl13/twmap),
 [`teeworlds-go/huffman`](https://github.com/teeworlds-go/huffman), and
 [`teeworlds-go/varint`](https://github.com/teeworlds-go/varint) — **no cgo, no
-OpenGL, no ML framework**. The example bots under `cmd/` (an ebiten GUI + a
-gorgonia ML trainer) live in a **separate module** (`cmd/go.mod`) so their heavy
-dependencies never reach library consumers.
+OpenGL, no ML framework**. Heavy consumer-side dependencies (GUI, ML) belong in
+your own module, never the root `go.mod`, so library consumers pull none of them.
 
 ## Quickstart
 
