@@ -48,6 +48,13 @@ jobs:
         run: make tools
       - name: Gates (vet, staticcheck, modernize-check, vuln, test + doccov)
         run: make check
+      - name: Cross-compile (catch GOOS-specific build breaks, B23)
+        run: |
+          set -e
+          for t in windows/amd64 windows/arm64 darwin/amd64 darwin/arm64 linux/arm64; do
+            echo "build $t"
+            CGO_ENABLED=0 GOOS="${t%/*}" GOARCH="${t#*/}" go build ./...
+          done
       - name: Race detector + coverage
         run: |
           set -o pipefail

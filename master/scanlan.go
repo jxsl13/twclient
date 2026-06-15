@@ -6,7 +6,6 @@ import (
 	"math/rand/v2"
 	"net"
 	"strconv"
-	"syscall"
 	"time"
 
 	"github.com/jxsl13/twclient/net6"
@@ -166,13 +165,12 @@ func (c *Client) ScanLAN(ctx context.Context, opts ...ScanOption) ([]LANServer, 
 
 // enableBroadcast sets SO_BROADCAST on the socket so WriteToUDP to a broadcast
 // address is permitted. Best-effort: a unicast scan (or a target that doesn't
-// need it) works regardless.
+// need it) works regardless. The setsockopt fd type differs per OS, so the call
+// lives in build-tagged setBroadcast (broadcast_unix.go / broadcast_windows.go).
 func enableBroadcast(conn *net.UDPConn) {
 	rc, err := conn.SyscallConn()
 	if err != nil {
 		return
 	}
-	_ = rc.Control(func(fd uintptr) {
-		_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-	})
+	_ = rc.Control(func(fd uintptr) { _ = setBroadcast(fd) })
 }
