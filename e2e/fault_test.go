@@ -30,14 +30,13 @@ func TestE2ELoginUnderLoss(t *testing.T) {
 	}{
 		// 0.6 tolerates heavy bidirectional loss (full vital retransmission).
 		{"ddnet-0.6", packet.Version06, "TW_E2E_DDNET_06", udpfault.Policy{DropC2S: 0.2, DropS2C: 0.2, Seed: 1}, ""},
-		// 0.7: PARTIAL. The map-download is now loss-resilient (T162: request-resend
-		// + in-order vital reassembly — verified to drain under c2s loss). But the
-		// 0.7 login still has TWO deeper loss gaps that form a chain: (a) a dropped
-		// CTRL_ACCEPT deadlocks (server won't re-ACCEPT a duplicate CONNECT), and
-		// (b) the READY→CON_READY wait doesn't reliably resend READY when other
-		// traffic resets its timer. Full 0.7 loss-resilience is a larger reliability
-		// effort (B21/T162-open). 0.6 covers full bidirectional loss today.
-		{"ddnet-0.7", packet.Version07, "TW_E2E_DDNET_07", udpfault.Policy{DropC2S: 0.3, Seed: 1}, "0.7 login con_ready/accept not yet loss-resilient (T163/T164)"},
+		// 0.7 under CLIENT→SERVER loss: now fully resilient (T162 map-download +
+		// T163 — vital REQUEST_MAP_DATA/READY retransmit with their ORIGINAL seq, so
+		// a lost client vital no longer leaves a permanent gap in the server's
+		// in-order queue; + cadence re-ack so the server resends dropped chunks).
+		// server→client ACCEPT loss (T164) remains a separate open edge, so this
+		// case is c2s-only; 0.6 covers full bidirectional.
+		{"ddnet-0.7", packet.Version07, "TW_E2E_DDNET_07", udpfault.Policy{DropC2S: 0.3, Seed: 1}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

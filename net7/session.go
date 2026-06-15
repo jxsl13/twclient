@@ -647,9 +647,16 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 	if perReq <= 0 {
 		perReq = 1
 	}
-	sendReq := func() error {
-		return s.SendChunks(1, WrapVitalChunk(SysRequestMapData(), s.NextSeq()))
-	}
+	// REQUEST_MAP_DATA is a VITAL message (seq-ordered). On loss it MUST be
+	// RETRANSMITTED with its ORIGINAL seq — a fresh seq leaves a permanent gap the
+	// server's in-order vital queue stalls on (it then never processes our later
+	// READY → no CON_READY), T163. So build each window's request ONCE; resend the
+	// SAME bytes on timeout, and only mint a NEW seq when advancing to the next
+	// window.
+	var curReq []byte
+	newReq := func() { curReq = WrapVitalChunk(SysRequestMapData(), s.NextSeq()) }
+	sendReq := func() error { return s.SendChunks(1, curReq) }
+	newReq()
 	if err := sendReq(); err != nil {
 		return err
 	}
@@ -657,11 +664,20 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 	var data []byte
 	chunkCount := 0
 	safety := info.Size*2 + 4096 // backstop vs an infinite loop; ctx is the real bound
+	lastReq := time.Now()
 	for len(data) < info.Size && safety > 0 {
 		safety--
-		// Time-boxed recv: on timeout (a lost REQUEST_MAP_DATA or a lost chunk)
-		// resend the current request. The request carries our ack, so the server
-		// resends the unacked MAP_DATA vitals from there (T162/V126/B21).
+		// CADENCE re-request: resend the current request (which carries our ack)
+		// at least every interval — ⊥ only on recv-timeout. Under s2c loss the
+		// server keeps pushing (out-of-order) chunks so a timeout-only resend never
+		// fires, yet our ack is stuck on the gap; re-acking on cadence drives the
+		// server to RESEND the missing in-order vital (T163/T164).
+		if time.Since(lastReq) >= packet.LoginResendInterval {
+			if rerr := sendReq(); rerr != nil {
+				return rerr
+			}
+			lastReq = time.Now()
+		}
 		hdr, payload, err := s.recvAndParsePayloadTimeout(ctx, packet.LoginResendInterval)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -670,6 +686,7 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 			if rerr := sendReq(); rerr != nil {
 				return rerr
 			}
+			lastReq = time.Now()
 			continue
 		}
 		if payload == nil {
@@ -705,6 +722,7 @@ func (s *Session) drainMapForLogin(ctx context.Context) error {
 			data = append(data, ch.Data[1:]...)
 			chunkCount++
 			if chunkCount%perReq == 0 && len(data) < info.Size { // window done → next
+				newReq() // next window = a NEW vital (new seq)
 				if err := sendReq(); err != nil {
 					return err
 				}
