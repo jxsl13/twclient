@@ -117,6 +117,32 @@ func (c *Client) OnWeaponChange(fn func(*Client, packet.EventWeaponChange)) func
 	return On(c, fn)
 }
 
+// OnPlayerEnterSight registers a handler for when a tee becomes visible to the
+// local character — i.e. enters the snapshot set (the chars the server sends,
+// culled to a radius around the local tee). The event carries the entering
+// tee's position (X, Y). Edge-triggered on snapshot-set membership. It fires for
+// EVERY visible tee including the local one (own (re)spawn); to react to OTHER
+// tees only, filter on e.ClientID != c.LocalID() (V143).
+func (c *Client) OnPlayerEnterSight(fn func(*Client, packet.EventPlayerEnterSight)) func() {
+	return On(c, fn)
+}
+
+// OnPlayerLeaveSight registers a handler for when a visible tee leaves the
+// snapshot set (no longer visible to the local character). Fires for all tees
+// including self; filter e.ClientID != c.LocalID() for others only (V143).
+func (c *Client) OnPlayerLeaveSight(fn func(*Client, packet.EventPlayerLeaveSight)) func() {
+	return On(c, fn)
+}
+
+// OnPlayerMove registers a handler for when a visible tee moves within sight.
+// Throttled: a tee must move at least WithMoveEventThreshold world units since
+// the last reported position before the event fires (V127). Fires for all
+// visible tees including self; filter e.ClientID != c.LocalID() for others only
+// (V143).
+func (c *Client) OnPlayerMove(fn func(*Client, packet.EventPlayerMove)) func() {
+	return On(c, fn)
+}
+
 // OnServerCapabilities registers a handler for the DDNet server capabilities
 // announcement (V47).
 func (c *Client) OnServerCapabilities(fn func(*Client, packet.EventServerCapabilities)) func() {

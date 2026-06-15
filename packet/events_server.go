@@ -319,9 +319,12 @@ func (EventServerSettings) eventTag() {}
 
 // ---- snap-derived: presence (A) ----
 
-// EventPlayerEnterSight fires when a character enters the snapshot set.
+// EventPlayerEnterSight fires when a character enters the snapshot set (becomes
+// visible to the local tee). X, Y are its position at the entering edge.
 type EventPlayerEnterSight struct {
 	ClientID int
+	X        int
+	Y        int
 }
 
 func (EventPlayerEnterSight) eventTag() {}

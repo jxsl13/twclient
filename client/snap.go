@@ -194,10 +194,11 @@ func (ss *SnapStorage) deriveEvents() []packet.Event {
 	// alongside the unavoidable packet.Event interface boxing (V51, §PERF T35).
 	evs := make([]packet.Event, 0, len(cur))
 
-	// Presence: enter/leave sight (edge-triggered on set membership).
-	for id := range cur {
+	// Presence: enter/leave sight (edge-triggered on set membership). Enter
+	// carries the entering tee's position (V143).
+	for id, c := range cur {
 		if _, ok := prev[id]; !ok {
-			evs = append(evs, packet.EventPlayerEnterSight{ClientID: id})
+			evs = append(evs, packet.EventPlayerEnterSight{ClientID: id, X: c.X, Y: c.Y})
 		}
 	}
 	for id := range prev {
