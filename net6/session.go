@@ -37,6 +37,7 @@ type options struct {
 	eventChanSize   int
 	readBufferSize  int
 	mapProgress     func(received, total int)
+	mapDownloadURL  string
 }
 
 // WithLogger sets a custom logger for the session.
@@ -65,6 +66,14 @@ func WithMapCache(cache *packet.MapCache) Option {
 // MAP_CHANGE). nil = no progress reporting.
 func WithMapDownloadProgress(fn func(received, total int)) Option {
 	return func(o *options) { o.mapProgress = fn }
+}
+
+// WithMapDownloadURL sets the base URL for HTTP(S) map downloads (V148). When
+// set and the map's SHA256 is known, DownloadMap fetches
+// <base>/<name>_<sha256hex>.map over HTTP(S) (resumable, sha-verified) and falls
+// back to the UDP chunked download on failure. Empty = UDP-only.
+func WithMapDownloadURL(base string) Option {
+	return func(o *options) { o.mapDownloadURL = base }
 }
 
 // WithSnapStorageSize sets the retained-snapshot window (packet.SnapStorage
@@ -102,7 +111,8 @@ type Session struct {
 	mapInfo       packet.MapInfo
 	parsed        *twmap.Map
 	mapCache      *packet.MapCache          // always set: shared or per-session
-	mapProgress   func(received, total int) // map-download progress callback; nil = none (V145)
+	mapProgress    func(received, total int) // map-download progress callback; nil = none (V145)
+	mapDownloadURL string                    // HTTP(S) map base URL; "" = UDP-only (V148)
 	reader        reader           // background reader state (activated by StartReader)
 
 	snapStorageSize int // configured packet.SnapStorage window; 0 = default (V53)
@@ -154,6 +164,7 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 	}
 	s := &Session{
 		mapProgress:     o.mapProgress,
+		mapDownloadURL:  o.mapDownloadURL,
 		conn:            conn,
 		clientToken:     packet.RandomToken(),
 		securityToken:   SecurityTokenUnknown,
@@ -650,8 +661,21 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 		// ok==false means we are the designated downloader
 	}
 
+	// Prefer HTTP(S) when the map sha is known and a base URL is set; fall back
+	// to the UDP chunked download on any failure (V148). HTTP is Range-resumable
+	// (V147).
+	if s.mapDownloadURL != "" && info.Sha256 != ([32]byte{}) {
+		if data, err := s.httpDownloadMap(ctx, info); err == nil {
+			s.log.Info("map http download complete", "map", info.Name, "bytes", len(data))
+			return s.finishMap(info, data)
+		} else {
+			s.log.Warn("http map download failed; falling back to UDP", "map", info.Name, "error", err)
+		}
+	}
+
 	var mapData []byte
 	chunkIdx := 0
+	chunkRetries := 0
 	maxChunks := (info.Size / 896) + 2 // safety limit
 
 	for chunkIdx < maxChunks {
@@ -668,11 +692,21 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 		// Receive until we get a MAP_DATA response
 		last, chunkData, err := s.recvMapDataChunk(ctx)
 		if err != nil {
+			// In-session RESUME: a transient recv hiccup re-requests the SAME
+			// chunk (resume from the last good chunk, ⊥ restart) up to a bound;
+			// the client drives the chunk index on 0.6, so this is safe (V147).
+			// A cancelled/expired ctx is terminal.
+			if ctx.Err() == nil && chunkRetries < udpMapChunkRetries {
+				chunkRetries++
+				s.log.Warn("map data recv hiccup; re-requesting chunk", "chunk", chunkIdx, "retry", chunkRetries, "error", err)
+				continue
+			}
 			if s.mapCache != nil {
 				s.mapCache.PutFailed(info.Name, info.Sha256)
 			}
 			return nil, fmt.Errorf("session06: recv map data chunk %d: %w", chunkIdx, err)
 		}
+		chunkRetries = 0 // progress made → reset the resume budget
 		mapData = append(mapData, chunkData...)
 		chunkIdx++
 		if s.mapProgress != nil { // received-so-far / total (V145)
@@ -685,23 +719,25 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 	}
 
 	s.log.Info("map download complete", "map", info.Name, "chunks", chunkIdx, "bytes", len(mapData))
+	return s.finishMap(info, mapData)
+}
 
-	// Parse and optionally store in cache
+// finishMap parses assembled map bytes (leniently, V146), stores them in the
+// cache + session, and returns the parsed map. Shared by the HTTP and UDP paths.
+func (s *Session) finishMap(info packet.MapInfo, data []byte) (*twmap.Map, error) {
 	var m *twmap.Map
-	var parseErr error
+	var err error
 	if s.mapCache != nil {
-		m, parseErr = s.mapCache.ParseAndPut(info.Name, info.Sha256, mapData)
+		m, err = s.mapCache.ParseAndPut(info.Name, info.Sha256, data)
 	} else {
-		m, parseErr = twmap.Parse(bytes.NewReader(mapData))
+		m, err = twmap.Parse(bytes.NewReader(data), twmap.WithRequireInfo(false)) // accept info-less maps (V146)
 	}
-	if parseErr != nil {
-		return nil, fmt.Errorf("session06: parse map %q: %w", info.Name, parseErr)
+	if err != nil {
+		return nil, fmt.Errorf("session06: parse map %q: %w", info.Name, err)
 	}
-
 	s.mapMu.Lock()
 	s.parsed = m
 	s.mapMu.Unlock()
-
 	return m, nil
 }
 

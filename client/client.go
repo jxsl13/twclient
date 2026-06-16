@@ -60,6 +60,7 @@ type Client struct {
 	detectTimeout      time.Duration  // auto-detect connless probe window; 0 = DefaultDetectTimeout (V138)
 	requireMap         bool           // Connect errors on map-download failure instead of warn+continue (V144)
 	mapProgress        func(received, total int) // map-download progress callback; nil = no-op (V145)
+	mapDownloadURL     string                    // 0.6 HTTP(S) map base; "" = UDP-only (V148)
 	mapCache           *packet.MapCache
 	snapStorageSize    int // packet.SnapStorage window for the session reader; 0 = default (V53)
 	predInputRingLen   int // prediction input ring size; 0 = default (V54)
@@ -346,6 +347,19 @@ func WithMapDownloadProgress(fn func(received, total int)) Option {
 	return func(c *Client) { c.mapProgress = fn }
 }
 
+// DefaultMapDownloadURL is the default base URL for HTTP(S) map downloads on 0.6
+// (the public DDNet map store). Override or disable with WithMapDownloadURL.
+const DefaultMapDownloadURL = "https://maps.ddnet.org"
+
+// WithMapDownloadURL sets the base URL for HTTP(S) map downloads on 0.6 (V148).
+// When set and the server provides the map's SHA256, Connect fetches the map
+// from <base>/<name>_<sha256hex>.map over HTTP(S) — resumable and sha-verified —
+// and falls back to the in-protocol UDP download on any failure. Pass "" to
+// disable HTTP and always use UDP. No effect on 0.7 (UDP-only).
+func WithMapDownloadURL(base string) Option {
+	return func(c *Client) { c.mapDownloadURL = base }
+}
+
 // WithoutAutoReconnect disables automatic reconnection; a server drop then
 // surfaces via Err()/LastDisconnect without the client retrying.
 func WithoutAutoReconnect() Option {
@@ -366,6 +380,7 @@ func New(address string, opts ...Option) *Client {
 		country:         packet.DefaultCountry,
 		version:         packet.VersionAuto, // detect at Connect unless WithVersion pins (V138)
 		detectTimeout:   DefaultDetectTimeout,
+		mapDownloadURL:  DefaultMapDownloadURL, // 0.6 HTTP(S) map source; WithMapDownloadURL("") disables (V148)
 		mapCache:        packet.NewMapCache(),
 		log:             slog.New(slog.DiscardHandler),
 		predTun:         physics.DefaultTuning(),
@@ -919,6 +934,7 @@ func (c *Client) newSession() (Session, error) {
 			net6.WithEventChanSize(c.eventChanSize),
 			net6.WithReadBufferSize(c.readBufferSize),
 			net6.WithMapDownloadProgress(c.mapProgress),
+			net6.WithMapDownloadURL(c.mapDownloadURL),
 		)
 	case packet.Version07:
 		return net7.NewSession(c.address,

@@ -94,7 +94,9 @@ func (c *MapCache) PutFailed(name string, sha256 [32]byte) {
 
 // ParseAndPut parses raw map data, stores the result, and returns it.
 func (c *MapCache) ParseAndPut(name string, sha256 [32]byte, data []byte) (*twmap.Map, error) {
-	m, err := twmap.Parse(bytes.NewReader(data))
+	// Lenient: a headless client uses tiles/collision/game-state, not the
+	// optional INFO metadata item, so accept maps that lack it (V146/B28).
+	m, err := twmap.Parse(bytes.NewReader(data), twmap.WithRequireInfo(false))
 	if err != nil {
 		c.PutFailed(name, sha256)
 		return nil, err
