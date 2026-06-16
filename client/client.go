@@ -58,6 +58,8 @@ type Client struct {
 	caps               packet.ServerCapabilities // DDNet server capabilities (V47), protected by mu
 	version            packet.Version // VersionAuto = detect at Connect (V138); else pinned via WithVersion
 	detectTimeout      time.Duration  // auto-detect connless probe window; 0 = DefaultDetectTimeout (V138)
+	requireMap         bool           // Connect errors on map-download failure instead of warn+continue (V144)
+	mapProgress        func(received, total int) // map-download progress callback; nil = no-op (V145)
 	mapCache           *packet.MapCache
 	snapStorageSize    int // packet.SnapStorage window for the session reader; 0 = default (V53)
 	predInputRingLen   int // prediction input ring size; 0 = default (V54)
@@ -323,6 +325,27 @@ func WithConnectTimeout(d time.Duration) Option {
 	}
 }
 
+// ErrMapDownload is returned by Connect (wrapped) when the map download fails
+// and WithRequireMap is set. Without WithRequireMap, Connect logs a warning and
+// continues mapless instead (detect via HasMap). errors.Is matches it (V144).
+var ErrMapDownload = errors.New("client: map download failed")
+
+// WithRequireMap makes Connect FAIL (return ErrMapDownload, wrapped) when the
+// map download does not complete, instead of the default warn-and-continue. Use
+// it when a missing map is not acceptable (e.g. a renderer that needs the map);
+// the caller can then retry the connect (V144).
+func WithRequireMap() Option {
+	return func(c *Client) { c.requireMap = true }
+}
+
+// WithMapDownloadProgress registers a callback invoked during the map download
+// (which runs inside Connect) as chunks arrive: received is the bytes so far,
+// total the full map size. received rises monotonically to total on success.
+// The callback runs on the goroutine that called Connect; keep it quick (V145).
+func WithMapDownloadProgress(fn func(received, total int)) Option {
+	return func(c *Client) { c.mapProgress = fn }
+}
+
 // WithoutAutoReconnect disables automatic reconnection; a server drop then
 // surfaces via Err()/LastDisconnect without the client retrying.
 func WithoutAutoReconnect() Option {
@@ -458,8 +481,14 @@ func (c *Client) Connect(ctx context.Context) (err error) {
 		return fmt.Errorf("client: login: %w", err)
 	}
 
-	if _, err := sess.DownloadMap(seqCtx); err != nil {
-		c.log.Warn("map download failed, continuing without map", "error", err)
+	if _, derr := sess.DownloadMap(seqCtx); derr != nil {
+		// WithRequireMap: a missing map is fatal — surface it so the caller can
+		// retry (issue #8, V144). Default: warn + continue mapless (detectable
+		// via HasMap, back-compat V48).
+		if c.requireMap {
+			return fmt.Errorf("%w: %v", ErrMapDownload, derr)
+		}
+		c.log.Warn("map download failed, continuing without map", "error", derr)
 	}
 
 	// Reset snap state for the new connection. The decoder + is07 select the
@@ -724,6 +753,13 @@ func (c *Client) Map() *twmap.Map {
 	return c.sess.Map()
 }
 
+// HasMap reports whether a map is loaded for the current session (Map() != nil).
+// After Connect returns, false means the map download did not complete — the
+// client is connected but mapless (events/roster flow, but the world cannot be
+// rendered). The in-Connect download is synchronous, so this is terminal, not
+// "still downloading"; reconnect re-runs the download (issue #8, V144).
+func (c *Client) HasMap() bool { return c.Map() != nil }
+
 // MapName returns the current map name.
 func (c *Client) MapName() string {
 	if c.sess == nil {
@@ -882,6 +918,7 @@ func (c *Client) newSession() (Session, error) {
 			net6.WithSnapStorageSize(c.snapStorageSize),
 			net6.WithEventChanSize(c.eventChanSize),
 			net6.WithReadBufferSize(c.readBufferSize),
+			net6.WithMapDownloadProgress(c.mapProgress),
 		)
 	case packet.Version07:
 		return net7.NewSession(c.address,
@@ -889,6 +926,7 @@ func (c *Client) newSession() (Session, error) {
 			net7.WithSnapStorageSize(c.snapStorageSize),
 			net7.WithEventChanSize(c.eventChanSize),
 			net7.WithReadBufferSize(c.readBufferSize),
+			net7.WithMapDownloadProgress(c.mapProgress),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", c.version)
