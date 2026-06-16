@@ -692,7 +692,7 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 	if s.mapCache != nil {
 		m, parseErr = s.mapCache.ParseAndPut(info.Name, info.Sha256, mapData)
 	} else {
-		m, parseErr = twmap.Parse(bytes.NewReader(mapData))
+		m, parseErr = twmap.Parse(bytes.NewReader(mapData), twmap.WithRequireInfo(false)) // accept info-less maps (V146)
 	}
 	if parseErr != nil {
 		return nil, fmt.Errorf("session06: parse map %q: %w", info.Name, parseErr)
