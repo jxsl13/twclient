@@ -29,6 +29,7 @@ type options struct {
 	snapStorageSize int
 	eventChanSize   int
 	readBufferSize  int
+	mapProgress     func(received, total int)
 }
 
 // WithLogger sets a custom logger for the session.
@@ -50,6 +51,13 @@ func WithMapCache(cache *packet.MapCache) Option {
 			o.mapCache = cache
 		}
 	}
+}
+
+// WithMapDownloadProgress sets a callback invoked during DownloadMap as map
+// bytes arrive: received is the bytes so far, total the full map size (from
+// MAP_CHANGE). nil = no progress reporting.
+func WithMapDownloadProgress(fn func(received, total int)) Option {
+	return func(o *options) { o.mapProgress = fn }
 }
 
 // WithSnapStorageSize sets the retained-snapshot window (packet.SnapStorage
@@ -92,8 +100,9 @@ type Session struct {
 	mapMu         sync.RWMutex
 	mapInfo       packet.MapInfo
 	parsed        *twmap.Map
-	loginMapData  []byte           // raw map bytes drained during login (B11/V110); consumed by DownloadMap
-	mapCache      *packet.MapCache // always set: shared or per-session
+	loginMapData  []byte                    // raw map bytes drained during login (B11/V110); consumed by DownloadMap
+	mapCache      *packet.MapCache          // always set: shared or per-session
+	mapProgress   func(received, total int) // map-download progress callback; nil = none (V145)
 	reader        reader           // background reader state (activated by StartReader)
 
 	snapStorageSize int // configured packet.SnapStorage window; 0 = default (V53)
@@ -129,6 +138,7 @@ func NewSession(address string, opts ...Option) (*Session, error) {
 		clientToken:     packet.RandomToken(),
 		log:             log,
 		mapCache:        o.mapCache,
+		mapProgress:     o.mapProgress,
 		snapStorageSize: o.snapStorageSize,
 		eventChanSize:   o.eventChanSize,
 		readBufferSize:  o.readBufferSize,
@@ -862,6 +872,9 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 			s.mapMu.Lock()
 			s.parsed = m
 			s.mapMu.Unlock()
+			if s.mapProgress != nil { // cache hit = instantly complete (V145)
+				s.mapProgress(info.Size, info.Size)
+			}
 			return m, nil
 		}
 		// ok==false means we are the designated downloader
@@ -873,6 +886,9 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 	if len(s.loginMapData) > 0 {
 		data := s.loginMapData
 		s.loginMapData = nil
+		if s.mapProgress != nil { // drained during login → already complete (V145)
+			s.mapProgress(len(data), info.Size)
+		}
 		var m *twmap.Map
 		var perr error
 		if s.mapCache != nil {
@@ -913,6 +929,9 @@ func (s *Session) DownloadMap(ctx context.Context) (*twmap.Map, error) {
 			return nil, fmt.Errorf("session07: recv map data: %w", err)
 		}
 		mapData = append(mapData, chunkData...)
+		if s.mapProgress != nil { // received-so-far / total (V145)
+			s.mapProgress(len(mapData), info.Size)
+		}
 	}
 
 	s.log.Info("map download complete", "map", info.Name, "bytes", len(mapData))

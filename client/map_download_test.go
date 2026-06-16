@@ -46,3 +46,19 @@ func TestDefaultMaplessConnectDetectable(t *testing.T) {
 		t.Error("HasMap() = true, want false after a failed map download")
 	}
 }
+
+// issue #9 / V145: WithMapDownloadProgress wires a callback onto the client
+// (threaded into the session's DownloadMap in newSession).
+func TestWithMapDownloadProgressSetsCallback(t *testing.T) {
+	var got [2]int
+	c := New("x:8303", WithMapDownloadProgress(func(received, total int) {
+		got = [2]int{received, total}
+	}))
+	if c.mapProgress == nil {
+		t.Fatal("WithMapDownloadProgress did not set the callback")
+	}
+	c.mapProgress(7, 16)
+	if got != [2]int{7, 16} {
+		t.Errorf("callback got %v, want [7 16]", got)
+	}
+}

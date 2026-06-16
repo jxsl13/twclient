@@ -918,6 +918,7 @@ func (c *Client) newSession() (Session, error) {
 			net6.WithSnapStorageSize(c.snapStorageSize),
 			net6.WithEventChanSize(c.eventChanSize),
 			net6.WithReadBufferSize(c.readBufferSize),
+			net6.WithMapDownloadProgress(c.mapProgress),
 		)
 	case packet.Version07:
 		return net7.NewSession(c.address,
@@ -925,6 +926,7 @@ func (c *Client) newSession() (Session, error) {
 			net7.WithSnapStorageSize(c.snapStorageSize),
 			net7.WithEventChanSize(c.eventChanSize),
 			net7.WithReadBufferSize(c.readBufferSize),
+			net7.WithMapDownloadProgress(c.mapProgress),
 		)
 	default:
 		return nil, fmt.Errorf("unsupported protocol version: %d", c.version)
