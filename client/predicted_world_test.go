@@ -121,7 +121,7 @@ func TestPredictedWorldReSimDeterministic(t *testing.T) {
 	}
 
 	w := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, map[int]CharacterState{1: seed})
-	w.advanceOwn(1, base+5, &buf)
+	w.advance(1, base+5, &buf, false)
 	got, ok := w.character(1)
 	if !ok {
 		t.Fatal("no predicted character")
@@ -143,21 +143,34 @@ func TestPredictedWorldReSimDeterministic(t *testing.T) {
 	}
 }
 
-// V9a: other players are extrapolated (held direction) while the local player
-// is left for the input-driven re-sim.
+// V9a/V21: with antiping on, the whole world advances in lockstep — the local
+// player replays its inputs while others hold their last-seen direction. The
+// three tees here are far apart (no interaction), isolating the extrapolation.
 func TestPredictedWorldExtrapolateOthers(t *testing.T) {
 	col := openCollision()
 	tun := physics.DefaultTuning()
 	base := 100
 	chars := map[int]CharacterState{
-		1: {X: 1000, Y: 1000, Direction: 1}, // local
+		1: {X: 1000, Y: 1000, Direction: 1}, // local, walking right
 		2: {X: 2000, Y: 1000, Direction: 1}, // other, walking right
 		3: {X: 3000, Y: 1000, Direction: 0}, // other, standing
 	}
 	w := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, chars)
-	w.advanceOthers(1, base+10)
 
-	// Other player 2 walked right; player 3 stayed put (horizontally).
+	// The local input buffer gates the lockstep advance; feed it a steady walk.
+	var buf predInputBuffer
+	in := packet.PlayerInput{Direction: packet.DirRight}
+	for tick := base + 1; tick <= base+10; tick++ {
+		buf.record(tick, in)
+	}
+	w.advance(1, base+10, &buf, true)
+
+	// Local player 1 walked right under its own inputs.
+	p1, _ := w.character(1)
+	if p1.X <= 1000 {
+		t.Errorf("local player should have walked right, X=%d", p1.X)
+	}
+	// Other player 2 walked right (held direction); player 3 stayed put.
 	p2, _ := w.character(2)
 	if p2.X <= 2000 {
 		t.Errorf("player 2 should have walked right, X=%d", p2.X)
@@ -165,11 +178,6 @@ func TestPredictedWorldExtrapolateOthers(t *testing.T) {
 	p3, _ := w.character(3)
 	if p3.X != 3000 {
 		t.Errorf("standing player 3 should not move horizontally, X=%d", p3.X)
-	}
-	// Local player 1 must be untouched by advanceOthers.
-	p1, _ := w.character(1)
-	if p1.X != 1000 {
-		t.Errorf("local player must not be extrapolated by advanceOthers, X=%d", p1.X)
 	}
 
 	if all := w.characters(); len(all) != 3 {
@@ -185,7 +193,7 @@ func TestPredictedWorldNoAdvance(t *testing.T) {
 	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 50, map[int]CharacterState{2: seed})
 
 	var buf predInputBuffer
-	w.advanceOwn(2, 50, &buf) // predTick == baseTick
+	w.advance(2, 50, &buf, false) // predTick == baseTick
 
 	got, _ := w.character(2)
 	if got.X != seed.X || got.Y != seed.Y {
@@ -204,7 +212,7 @@ func TestPredictedWorldStopsAtGap(t *testing.T) {
 	// tick base+3 intentionally missing
 
 	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), base, map[int]CharacterState{0: {X: 0, Y: 0}})
-	w.advanceOwn(0, base+5, &buf)
+	w.advance(0, base+5, &buf, false)
 	got, _ := w.character(0)
 
 	ref := seedCore(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), CharacterState{X: 0, Y: 0})

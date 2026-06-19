@@ -2,6 +2,7 @@ package client
 
 import (
 	"maps"
+	"sort"
 
 	"github.com/jxsl13/twclient/packet"
 	"github.com/jxsl13/twclient/physics"
@@ -10,7 +11,7 @@ import (
 // PredictedWorld holds a physics core per visible character, seeded from the
 // latest acked snapshot and ticked forward to the predicted tick. The local
 // character is driven by the buffered local inputs; other characters are
-// extrapolated (see advanceOthers, T9a). This mirrors DDNet's CGameWorld /
+// extrapolated (see advance, V9a). This mirrors DDNet's CGameWorld /
 // m_PredictedWorld (V9).
 type PredictedWorld struct {
 	col      *physics.Collision
@@ -64,44 +65,69 @@ func seedCore(col *physics.Collision, tun physics.Tuning, cfg physics.WorldConfi
 	return c
 }
 
-// advanceOwn re-simulates the local character from baseTick to predTick by
-// replaying the buffered local inputs. Missing inputs stop the re-sim (the
-// state is left at the last applied tick).
-func (w *PredictedWorld) advanceOwn(localCID, predTick int, inputs *predInputBuffer) {
-	core := w.cores[localCID]
-	if core == nil {
+// advance re-simulates the predicted world from baseTick to predTick as ONE
+// lockstep whole-world tick (physics.WorldStep), so tee↔tee collision (T199)
+// and hook-drag (T204) act on the real prediction, not just the golden harness
+// (V21). The local character replays its buffered inputs; every other character
+// holds its last-seen intent constant over the window (V9a). A missing local
+// input STOPS the entire advance at the last fully-driven tick (V9) — others
+// never run past the local. With antiping off only the local core is advanced;
+// others stay at the seed and are returned raw (V11).
+//
+// WorldStep indexes peers (and physics HookedPlayer) by slice position, so the
+// core slice order is fixed once (sorted by client ID) and reused every tick.
+func (w *PredictedWorld) advance(localCID, predTick int, inputs *predInputBuffer, antiping bool) {
+	cids := w.orderedCIDs(localCID, antiping)
+	if len(cids) == 0 {
 		return
 	}
-	for tick := w.baseTick + 1; tick <= predTick; tick++ {
-		in, ok := inputs.get(tick)
-		if !ok {
-			break
+	cores := make([]*physics.Core, len(cids))
+	localIdx := -1
+	for i, cid := range cids {
+		cores[i] = w.cores[cid]
+		if cid == localCID {
+			localIdx = i
 		}
-		w.applyZoneTuning(core)
-		core.Step(inputToPhysics(in))
+	}
+
+	ins := make([]physics.Input, len(cores))
+	for tick := w.baseTick + 1; tick <= predTick; tick++ {
+		var localIn physics.Input
+		if localIdx >= 0 {
+			netIn, ok := inputs.get(tick)
+			if !ok {
+				break // missing local input stops the whole advance (V9)
+			}
+			localIn = inputToPhysics(netIn)
+		}
+		for i, cid := range cids {
+			if i == localIdx {
+				ins[i] = localIn
+			} else {
+				ins[i] = extrapolatedInput(w.seed[cid])
+			}
+			w.applyZoneTuning(cores[i])
+		}
+		physics.WorldStep(cores, ins)
 	}
 }
 
-// advanceOthers extrapolates every non-local character to predTick. With no
-// inputs available for other players, DDNet reuses their last-seen intent
-// (movement direction and hook); we hold that constant over the window (V9a).
-// Accuracy is lower than the local re-sim and is corrected on the next
-// snapshot reconcile.
-func (w *PredictedWorld) advanceOthers(localCID, predTick int) {
-	steps := predTick - w.baseTick
-	if steps <= 0 {
-		return
-	}
-	for cid, core := range w.cores {
-		if cid == localCID {
-			continue
+// orderedCIDs returns the client IDs to advance, sorted ascending for a stable
+// WorldStep peer order. With antiping off only the local character is predicted
+// (others stay raw, V11); with it on, every character in the world participates.
+func (w *PredictedWorld) orderedCIDs(localCID int, antiping bool) []int {
+	if !antiping {
+		if _, ok := w.cores[localCID]; ok {
+			return []int{localCID}
 		}
-		in := extrapolatedInput(w.seed[cid])
-		for range steps {
-			w.applyZoneTuning(core)
-			core.Step(in)
-		}
+		return nil
 	}
+	cids := make([]int, 0, len(w.cores))
+	for cid := range w.cores {
+		cids = append(cids, cid)
+	}
+	sort.Ints(cids)
+	return cids
 }
 
 // extrapolatedInput reconstructs a held input from a character's last-seen
@@ -209,10 +235,7 @@ func (c *Client) reconcilePrediction() {
 			return tun
 		}
 	}
-	w.advanceOwn(local, predTick, &c.predInputs)
-	if antiping {
-		w.advanceOthers(local, predTick)
-	}
+	w.advance(local, predTick, &c.predInputs, antiping)
 
 	c.mu.Lock()
 	c.prevPredWorld = c.predWorld
