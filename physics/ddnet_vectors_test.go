@@ -133,54 +133,57 @@ func TestDDNetGolden(t *testing.T) {
 
 	for _, sc := range g.Scenarios {
 		col := gridCollision(&g)
-		for _, gc := range sc.Cores {
-			// Drive an independent Core over this core's recorded inputs. The
-			// Go Core is single-player (no world/teams), so tee↔tee and hook-
-			// drag scenarios are EXPECTED to diverge — that divergence is the
-			// V153 gate input for T199/T203/T204.
-			core := NewCore(col, Vec2{X: gc.Init.X, Y: gc.Init.Y})
-			core.Vel = Vec2{X: gc.Init.VX, Y: gc.Init.VY}
+		// Build ALL cores of the scenario and advance them in LOCKSTEP via
+		// WorldStep, so tee↔tee collision (T199) actually applies. A single-core
+		// scenario reduces to Core.Step (the deferred pass is a no-op).
+		cores := make([]*Core, len(sc.Cores))
+		for i, gc := range sc.Cores {
+			cores[i] = NewCore(col, Vec2{X: gc.Init.X, Y: gc.Init.Y})
+			cores[i].Vel = Vec2{X: gc.Init.VX, Y: gc.Init.VY}
+		}
+		n := len(sc.Cores[0].Vectors)
+		posMatch := make([]int, len(cores))
+		velMatch := make([]int, len(cores))
+		maxPosDelta := make([]int, len(cores))
+		maxVelDelta := make([]int, len(cores))
 
-			n := len(gc.Vectors)
-			posMatch, velMatch := 0, 0
-			maxPosDelta, maxVelDelta := 0, 0
-			for i := range n {
-				in := gc.Inputs[i]
-				core.Step(Input{
-					Direction: in.Dir,
-					Jump:      in.Jump != 0,
-					Hook:      in.Hook != 0,
-					TargetX:   in.TX,
-					TargetY:   in.TY,
-				})
-				px, py := core.QuantizedPos()
-				vx, vy := qVel(core.Vel.X), qVel(core.Vel.Y)
-
-				want := gc.Vectors[i]
+		for t := range n {
+			ins := make([]Input, len(cores))
+			for i, gc := range sc.Cores {
+				in := gc.Inputs[t]
+				ins[i] = Input{Direction: in.Dir, Jump: in.Jump != 0, Hook: in.Hook != 0, TargetX: in.TX, TargetY: in.TY}
+			}
+			WorldStep(cores, ins)
+			for i, gc := range sc.Cores {
+				px, py := cores[i].QuantizedPos()
+				vx, vy := qVel(cores[i].Vel.X), qVel(cores[i].Vel.Y)
+				want := gc.Vectors[t]
 				dpx, dpy := abs(px-want.PX), abs(py-want.PY)
 				dvx, dvy := abs(vx-want.VX), abs(vy-want.VY)
 				if dpx == 0 && dpy == 0 {
-					posMatch++
+					posMatch[i]++
 				}
 				if dvx == 0 && dvy == 0 {
-					velMatch++
+					velMatch[i]++
 				}
-				maxPosDelta = maxInt(maxPosDelta, maxInt(dpx, dpy))
-				maxVelDelta = maxInt(maxVelDelta, maxInt(dvx, dvy))
+				maxPosDelta[i] = maxInt(maxPosDelta[i], maxInt(dpx, dpy))
+				maxVelDelta[i] = maxInt(maxVelDelta[i], maxInt(dvx, dvy))
 			}
+		}
 
+		for i, gc := range sc.Cores {
 			t.Logf("%-20s %-4d %6d %7d/%-d %7d/%-d %8d %8d",
-				sc.Name, gc.ID, n, posMatch, n, velMatch, n, maxPosDelta, maxVelDelta)
+				sc.Name, gc.ID, n, posMatch[i], n, velMatch[i], n, maxPosDelta[i], maxVelDelta[i])
 
-			// T198 (per-tick quantization, V149) brings the single-tee scenarios
-			// to FULL DDNet quantized parity — assert it so a quantize/op-order
-			// regression fails. tee_tee_collision / hook_drag / hook_grab_wall stay
-			// report-only: genuinely-missing subsystems pending T199/T203/T204.
+			// Scenarios brought to FULL DDNet quantized parity (V149): asserted so
+			// a regression fails. T198 = the single-tee set; T199 adds
+			// tee_tee_collision. hook_drag / hook_grab_wall stay report-only
+			// (player-hook attach + drag pending T203/T204).
 			switch sc.Name {
-			case "free_fall", "ground_move", "air_control", "jump", "hook_fly_retract", "wall_collision":
-				if posMatch != n || velMatch != n {
-					t.Errorf("%s core %d NOT at DDNet parity: posMatch=%d/%d velMatch=%d/%d (maxΔpos=%d maxΔvel=%d) [T198/V149]",
-						sc.Name, gc.ID, posMatch, n, velMatch, n, maxPosDelta, maxVelDelta)
+			case "free_fall", "ground_move", "air_control", "jump", "hook_fly_retract", "wall_collision", "tee_tee_collision":
+				if posMatch[i] != n || velMatch[i] != n {
+					t.Errorf("%s core %d NOT at DDNet parity: posMatch=%d/%d velMatch=%d/%d (maxΔpos=%d maxΔvel=%d) [V149]",
+						sc.Name, gc.ID, posMatch[i], n, velMatch[i], n, maxPosDelta[i], maxVelDelta[i])
 				}
 			}
 		}
