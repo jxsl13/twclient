@@ -171,6 +171,18 @@ func TestDDNetGolden(t *testing.T) {
 
 			t.Logf("%-20s %-4d %6d %7d/%-d %7d/%-d %8d %8d",
 				sc.Name, gc.ID, n, posMatch, n, velMatch, n, maxPosDelta, maxVelDelta)
+
+			// T198 (per-tick quantization, V149) brings the single-tee scenarios
+			// to FULL DDNet quantized parity — assert it so a quantize/op-order
+			// regression fails. tee_tee_collision / hook_drag / hook_grab_wall stay
+			// report-only: genuinely-missing subsystems pending T199/T203/T204.
+			switch sc.Name {
+			case "free_fall", "ground_move", "air_control", "jump", "hook_fly_retract", "wall_collision":
+				if posMatch != n || velMatch != n {
+					t.Errorf("%s core %d NOT at DDNet parity: posMatch=%d/%d velMatch=%d/%d (maxΔpos=%d maxΔvel=%d) [T198/V149]",
+						sc.Name, gc.ID, posMatch, n, velMatch, n, maxPosDelta, maxVelDelta)
+				}
+			}
 		}
 	}
 	t.Logf("=========================================================================================")

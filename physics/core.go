@@ -330,10 +330,24 @@ func (c *Core) Move() {
 	c.Pos = newPos
 }
 
-// Step runs a full server tick: Tick then Move.
+// Step runs a full server tick: Tick, Move, then Quantize.
 func (c *Core) Step(in Input) {
 	c.Tick(in)
 	c.Move()
+	c.quantize()
+}
+
+// quantize snaps Pos to integer world coords and Vel to the 1/256 grid, matching
+// DDNet's per-tick CCharacterCore::Quantize (Write→Read, gamecore.cpp:694-699).
+// DDNet's PREDICTION runs on quantized state — prediction character.cpp:642 calls
+// Quantize() every tick, so the rounded pos/vel feed the NEXT tick. Without this
+// the float Pos drifts ~4px/scenario from DDNet despite exact velocity (T197/T198,
+// V149 quantized-output parity).
+func (c *Core) quantize() {
+	c.Pos.X = float32(roundToInt(c.Pos.X))
+	c.Pos.Y = float32(roundToInt(c.Pos.Y))
+	c.Vel.X = float32(roundToInt(c.Vel.X*256)) / 256
+	c.Vel.Y = float32(roundToInt(c.Vel.Y*256)) / 256
 }
 
 // QuantizedPos returns the position rounded to integer world coordinates,
