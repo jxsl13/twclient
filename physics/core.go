@@ -37,6 +37,14 @@ type Core struct {
 	HookDir   Vec2
 	HookTick  int
 
+	// HookedPlayer is the peers index of the tee this core has hooked, or -1
+	// for an idle/wall hook (DDNet m_HookedPlayer). id is this core's own index
+	// and peers is the world set it interacts with — both populated by
+	// WorldStep before Tick; a single-core Step leaves peers nil (no attach).
+	HookedPlayer int
+	id           int
+	peers        []*Core
+
 	// In-flight grenades (rocket-jump modeling) and the previous fire input
 	// for edge detection.
 	grenades []grenade
@@ -54,12 +62,13 @@ func NewCore(col *Collision, pos Vec2) *Core {
 		col = NewCollision(nil) // nil collision → empty all-solid world (V70)
 	}
 	return &Core{
-		Pos:       pos,
-		Jumps:     DefaultJumps,
-		HookState: HookIdle,
-		col:       col,
-		tun:       DefaultTuning(),
-		cfg:       DefaultWorldConfig(),
+		Pos:          pos,
+		Jumps:        DefaultJumps,
+		HookState:    HookIdle,
+		HookedPlayer: -1,
+		col:          col,
+		tun:          DefaultTuning(),
+		cfg:          DefaultWorldConfig(),
 	}
 }
 
@@ -158,6 +167,7 @@ func (c *Core) Tick(in Input) {
 	} else {
 		c.HookState = HookIdle
 		c.HookPos = c.Pos
+		c.HookedPlayer = -1
 	}
 
 	// Horizontal control.
@@ -270,21 +280,64 @@ func (c *Core) tickHook() {
 			c.HookState = HookRetractStart
 			newPos = add(c.Pos, scale(normalize(sub(newPos, c.Pos)), c.tun.HookLength))
 		}
-		// Hook-through tiles (front layer) let the hook pass; see
-		// Collision.IntersectLineHook.
+		// Clip the hook to the first wall it crosses (hook-through front-layer
+		// tiles let it pass; see Collision.IntersectLineHook), but DEFER the
+		// state change: a player grab on the same tick takes priority over the
+		// ground (gamecore.cpp grabs players, then falls back to the wall).
+		goingToHitGround, goingToRetract := false, false
 		if hit, at, noHook := c.col.IntersectLineHook(c.HookPos, newPos); hit {
 			newPos = at
 			if noHook {
-				c.HookState = HookRetractStart
+				goingToRetract = true
 			} else {
+				goingToHitGround = true
+			}
+		}
+		// Player attach: grab the CLOSEST hookable peer whose body lies within
+		// PhysicalSize+2 of the clipped hook segment (gamecore.cpp:357-369).
+		var grabDist float32
+		for i, o := range c.peers {
+			if o == nil || o == c {
+				continue
+			}
+			cp, ok := closestPointOnLine(c.HookPos, newPos, o.Pos)
+			if !ok {
+				continue
+			}
+			if distance(o.Pos, cp) < PhysicalSize+2 {
+				if c.HookedPlayer == -1 || distance(c.HookPos, o.Pos) < grabDist {
+					c.HookState = HookGrabbed
+					c.HookedPlayer = i
+					grabDist = distance(c.HookPos, o.Pos)
+				}
+			}
+		}
+		// No player grabbed → commit the deferred wall verdict.
+		if c.HookState == HookFlying {
+			if goingToHitGround {
 				c.HookState = HookGrabbed
+			} else if goingToRetract {
+				c.HookState = HookRetractStart
 			}
 		}
 		c.HookPos = newPos
 	}
 
 	if c.HookState == HookGrabbed {
-		if distance(c.HookPos, c.Pos) > 46.0 {
+		switch {
+		case c.HookedPlayer != -1:
+			// Hooked to a player: the hook anchor follows that peer's position;
+			// the actual pull force on both tees is applied in the deferred
+			// collision pass (gamecore.cpp:502-513, see WorldStep). Release if
+			// the peer is gone.
+			if o := c.peer(c.HookedPlayer); o != nil {
+				c.HookPos = o.Pos
+			} else {
+				c.HookedPlayer = -1
+				c.HookState = HookRetracted
+				c.HookPos = c.Pos
+			}
+		case distance(c.HookPos, c.Pos) > 46.0:
 			hookVel := scale(normalize(sub(c.HookPos, c.Pos)), c.tun.HookDragAccel)
 			// The hook ignores gravity but should feel similar: dampen
 			// downward pull, and favour the direction the tee is steering.
@@ -304,11 +357,19 @@ func (c *Core) tickHook() {
 			}
 		}
 		// NOTE: DDNet's 1.2s hook timeout (m_HookTick > TickSpeed+TickSpeed/5)
-		// applies ONLY to hooked PLAYERS — wall hooks are endless. We don't
-		// model player hooks, so no timeout here (a wrongly applied timeout
-		// released the f3000 Tutorial wall hook 10 ticks early).
+		// lives in the CCharacter entity layer, not CCharacterCore, so the
+		// golden oracle never applies it; we don't model it here either (a
+		// wrongly applied timeout released the f3000 Tutorial wall hook early).
 		c.HookTick++
 	}
+}
+
+// peer returns the core at the given peers index, or nil if out of range.
+func (c *Core) peer(i int) *Core {
+	if i < 0 || i >= len(c.peers) {
+		return nil
+	}
+	return c.peers[i]
 }
 
 // Move integrates velocity into position for one tick, applying the velocity

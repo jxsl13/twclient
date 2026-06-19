@@ -177,10 +177,12 @@ func TestDDNetGolden(t *testing.T) {
 
 			// Scenarios brought to FULL DDNet quantized parity (V149): asserted so
 			// a regression fails. T198 = the single-tee set; T199 adds
-			// tee_tee_collision. hook_drag / hook_grab_wall stay report-only
-			// (player-hook attach + drag pending T203/T204).
+			// tee_tee_collision; T203+T204 add hook_drag (player-hook attach +
+			// drag). hook_grab_wall stays report-only: its position is at parity
+			// (30/30) but the legacy wall-hook drag accel rounds ≤2/256 off in
+			// velocity — a sub-pixel float-rounding artifact, not a subsystem gap.
 			switch sc.Name {
-			case "free_fall", "ground_move", "air_control", "jump", "hook_fly_retract", "wall_collision", "tee_tee_collision":
+			case "free_fall", "ground_move", "air_control", "jump", "hook_fly_retract", "wall_collision", "tee_tee_collision", "hook_drag":
 				if posMatch[i] != n || velMatch[i] != n {
 					t.Errorf("%s core %d NOT at DDNet parity: posMatch=%d/%d velMatch=%d/%d (maxΔpos=%d maxΔvel=%d) [V149]",
 						sc.Name, gc.ID, posMatch[i], n, velMatch[i], n, maxPosDelta[i], maxVelDelta[i])
