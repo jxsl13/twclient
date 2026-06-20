@@ -15,7 +15,7 @@ func TestPredictionConvergesToSnap(t *testing.T) {
 
 	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 100, map[int]CharacterState{1: snap})
 	var buf predInputBuffer
-	w.advanceOwn(1, 110, &buf) // no inputs buffered -> no re-sim
+	w.advance(1, 110, &buf, false) // no inputs buffered -> no re-sim
 
 	got, _ := w.character(1)
 	if got.X != snap.X || got.Y != snap.Y {
@@ -41,14 +41,14 @@ func TestPredictionDriftFreeAcrossReseeds(t *testing.T) {
 
 	// First reconcile cycle.
 	w1 := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, map[int]CharacterState{1: snap})
-	w1.advanceOwn(1, base+8, &buf)
+	w1.advance(1, base+8, &buf, false)
 	got1, _ := w1.character(1)
 
 	// Second cycle, re-seeded from the SAME authoritative snapshot. Because the
 	// world always starts from snapshot state, the outcome is identical — no
 	// drift carried from w1.
 	w2 := newPredictedWorld(col, tun, physics.DefaultWorldConfig(), base, map[int]CharacterState{1: snap})
-	w2.advanceOwn(1, base+8, &buf)
+	w2.advance(1, base+8, &buf, false)
 	got2, _ := w2.character(1)
 
 	if got1 != got2 {
@@ -62,7 +62,10 @@ func TestExtrapolationBounded(t *testing.T) {
 	col := openCollision()
 	seed := CharacterState{X: 5000, Y: 5000, Direction: 0}
 	w := newPredictedWorld(col, physics.DefaultTuning(), physics.DefaultWorldConfig(), 0, map[int]CharacterState{2: seed})
-	w.advanceOthers(1, 10) // 10 ticks of extrapolation, player not moving
+	// Local cid 1 is absent from the world, so the advance has no local input to
+	// gate on and extrapolates the others to predTick (antiping on, V9a).
+	var buf predInputBuffer
+	w.advance(1, 10, &buf, true) // 10 ticks of extrapolation, player not moving
 
 	got, _ := w.character(2)
 	dx := got.X - seed.X

@@ -49,6 +49,26 @@ func mix(a, b Vec2, t float32) Vec2 {
 	return Vec2{a.X + (b.X-a.X)*t, a.Y + (b.Y-a.Y)*t}
 }
 
+// closestPointOnLine returns the point on segment a→b nearest to p (clamped to
+// the segment) and ok=false for a degenerate zero-length segment, mirroring
+// DDNet's closest_point_on_line (base/vmath.h). Used by the hook→player attach
+// test (gamecore.cpp): a peer is grabbed when its body is within PhysicalSize+2
+// of this point.
+func closestPointOnLine(a, b, p Vec2) (Vec2, bool) {
+	ab := sub(b, a)
+	sq := dot(ab, ab)
+	if sq <= 0 {
+		return Vec2{}, false
+	}
+	t := dot(sub(p, a), ab) / sq
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	return add(a, scale(ab, t)), true
+}
+
 // saturatedAdd adds modifier to current but never pushes it past the
 // min/max bound it is heading toward (CCharacterCore SaturatedAdd).
 func saturatedAdd(min, max, current, modifier float32) float32 {
